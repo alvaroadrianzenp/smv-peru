@@ -59,6 +59,14 @@ uv run python          # entra a un REPL con el paquete disponible
 - [ ] Publicar en PyPI.
 - [ ] (Más adelante) API web HTTP encima de esta librería, como módulo opcional.
 
+## Disclaimer
+
+Este proyecto **no es oficial**. No tiene afiliación, endorsement ni relación con la Superintendencia del Mercado de Valores del Perú (SMV) ni con la Bolsa de Valores de Lima (BVL).
+
+Los datos provienen del portal público de datos abiertos de SMV; esta librería es un cliente que los reformatea. **No se garantiza la exactitud, completitud ni puntualidad de los datos** — pueden contener errores, estar desactualizados, o cambiar de formato sin aviso.
+
+Esta librería se provee con **fines informativos y educativos**. **No constituye recomendación de inversión, asesoría financiera, análisis profesional ni opinión sobre la conveniencia de instrumentos financieros.** Cualquier decisión de inversión basada en los datos provistos es responsabilidad exclusiva del usuario.
+
 ## Licencias
 
 - **Código:** MIT (ver `LICENSE`).
