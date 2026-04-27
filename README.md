@@ -17,23 +17,56 @@ pip install smv-peru
 ## Uso
 
 ```python
-from smv_peru import fetch_smv_fundamentals
+from smv_peru import fetch_estados_financieros
 
-# El primer argumento es el RPJ (código corto interno de SMV), NO el RUC.
-# "B30006" corresponde a Alicorp S.A.A. (RUC 20100055237).
-datos = fetch_smv_fundamentals("B30006", years_back=3, current_year=2024)
-print(datos)
+# Anual, consolidado (defaults)
+datos = fetch_estados_financieros(
+    "ALICORC1",
+    desde=2021,
+    hasta=2023,
+)
+
+# Trimestral, individual
+datos_q = fetch_estados_financieros(
+    "ALICORC1",
+    desde=2023, hasta=2023,
+    tipo="individual",
+    periodicidad="trimestral",
+)
+
+for p in datos["periods"]:
+    print(p["fiscal_year"], p["revenue"])
 ```
+
+## Tickers soportados
+
+Por ahora la librería soporta empresas industriales con esquema contable 2D de SMV. Se irá ampliando conforme se añada soporte para más esquemas (bancos = 2F, aseguradoras = 2E).
+
+| Ticker | Empresa |
+|---|---|
+| `ALICORC1` | Alicorp S.A.A. |
+| `BACKUSI1` | Backus & Johnston |
+| `CPACASC1` | Cementos Pacasmayo |
+| `ENGEPEC1` | Engie Perú |
+| `FERREYC1` | Ferreycorp |
+| `INRETC1`  | InRetail Perú |
+| `LUSURC1`  | Luz del Sur |
+| `MINSURI1` | Minsur |
+| `UNACEMC1` | UNACEM |
+| `VOLCABC1` | Volcan Compañía Minera |
+
+Si el ticker no está en el catálogo, se levanta `UnknownTickerError` con la lista completa en el mensaje.
 
 ## Formato del output
 
-El dict devuelto tiene dos keys: `years` (lista de dicts, uno por año fiscal,
-ordenada cronológicamente) e `info` (reservado para metadata futura).
+El dict devuelto tiene dos keys: `periods` (lista de dicts, uno por período) e `info` (reservado para metadata futura).
 
-Cada año contiene `fiscal_year` (int) más métricas y ratios:
+Cada período contiene:
 
-| Campo | Tipo | Unidad |
+| Campo | Tipo | Descripción |
 |---|---|---|
+| `fiscal_year` | int | Año fiscal del período. |
+| `quarter` | int \| None | `None` si es anual; `1`, `2`, `3` o `4` si es trimestral. |
 | `revenue`, `ebitda`, `net_income`, `equity`, `total_assets`, `total_debt`, `fcf` | float \| None | **Miles** de la moneda reportada por la empresa (típicamente soles). Ej. `revenue=13_655_764` ≈ S/. 13.66 mil millones. |
 | `eps` | float \| None | Utilidad por acción, unidades base. |
 | `current_ratio`, `roe`, `roic` | float \| None | **Decimales**, NO porcentajes. `roe=0.14` significa 14%. |
@@ -46,17 +79,22 @@ Este proyecto usa [uv](https://github.com/astral-sh/uv) como gestor de entornos 
 
 ```bash
 uv sync                # crea el venv e instala el paquete editable
+uv run pytest          # corre los tests
 uv run python          # entra a un REPL con el paquete disponible
 ```
 
 ## Roadmap
 
 - [x] Estructura inicial de la librería.
-- [ ] Documentar la API pública (`fetch_smv_fundamentals`).
-- [ ] Tests con datos cacheados.
-- [ ] Soporte de cache configurable (sin paths hardcoded).
-- [ ] Soporte para esquema 2F (bancos).
-- [ ] Publicar en PyPI.
+- [x] API pública documentada con docstrings.
+- [x] Tests unitarios y de integración con fixtures.
+- [x] Cache configurable (parámetro, env var, o user cache dir del SO).
+- [x] Soporte para periodicidad anual y trimestral.
+- [x] Selección explícita de estados consolidados o individuales.
+- [x] Catálogo de tickers BVL → SMV.
+- [ ] Soporte para esquema 2F (bancos: BAP, BCP, BBVA, Interbank).
+- [ ] Repo en GitHub público + GitHub Actions (CI).
+- [ ] Publicar `0.1.0` en PyPI.
 - [ ] (Más adelante) API web HTTP encima de esta librería, como módulo opcional.
 
 ## Disclaimer

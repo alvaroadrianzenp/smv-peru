@@ -1,25 +1,25 @@
 """
-smv_client.py
-=============
+client.py
+=========
 Cliente para el web service de datos abiertos de SMV (Superintendencia del
-Mercado de Valores del Perú). Descarga estados financieros anuales de
-empresas peruanas que cotizan en BVL y los mapea al schema interno.
+Mercado de Valores del Perú). Descarga estados financieros (anuales o
+trimestrales, consolidados o individuales) de empresas peruanas que cotizan
+en BVL y los mapea al schema interno.
 
 Endpoint: https://mvnet.smv.gob.pe/ws_od_eeff/WebServiceInfoFinanciera.asmx
 Formato:  SOAP 1.1, devuelve JSON dentro de un string en la respuesta.
 Cache:    por defecto en el user cache dir del SO (ej. ~/Library/Caches/smv-peru
-          en macOS). Configurable con el argumento `cache_dir` o la variable de
-          entorno SMV_PERU_CACHE_DIR.
+          en macOS). Configurable con el argumento `cache_dir` o la variable
+          de entorno SMV_PERU_CACHE_DIR.
 Unidades: los montos vienen en MILES de la moneda reportada por la empresa
           (típicamente soles peruanos). Los ratios (current_ratio, ROE, ROIC)
           son decimales, no porcentajes.
 
 Cobertura v1: solo empresas con esquema contable 2D (industriales, NIIF
-estándar). Bancos (esquema 2F) y aseguradoras (2E) no están soportadas
-y deben caer a mock vía la lógica del llamador.
+estándar). Bancos (esquema 2F) y aseguradoras (2E) no están soportadas.
 
 API pública:
-  fetch_smv_fundamentals(rpj, years_back=10) -> dict | None
+  fetch_estados_financieros(ticker, desde, hasta, tipo, periodicidad) -> dict | None
 """
 from __future__ import annotations
 
@@ -30,11 +30,12 @@ import re
 import sys
 import urllib.error
 import urllib.request
-from datetime import datetime
 from html import unescape
 from pathlib import Path
 
-logger = logging.getLogger("smv_client")
+from .empresas import resolve_ticker
+
+logger = logging.getLogger("smv_peru")
 
 SMV_ENDPOINT = "https://mvnet.smv.gob.pe/ws_od_eeff/WebServiceInfoFinanciera.asmx"
 SMV_NAMESPACE = "http://tempuri.org/"
@@ -85,22 +86,27 @@ CUENTAS_FLOW = {
     "capex":        "3D0206",  # ya viene negativo
 }
 
+# Mapeos de la API pública a códigos SMV
+_TIPO_CODES = {"consolidado": "C", "individual": "I"}
+_PERIODICIDAD_PERIODOS = {"anual": ["A"], "trimestral": ["1", "2", "3", "4"]}
 
-def _soap_envelope(operacion: str, ejercicio: int, tipo: str = "C") -> bytes:
+
+def _soap_envelope(operacion: str, ejercicio: int, periodo: str, tipo: str) -> bytes:
     return (
         '<?xml version="1.0" encoding="utf-8"?>'
         '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
         '<soap:Body>'
         f'<{operacion} xmlns="{SMV_NAMESPACE}">'
-        f'<Ejercicio>{ejercicio}</Ejercicio><Periodo>A</Periodo><Tipo>{tipo}</Tipo>'
+        f'<Ejercicio>{ejercicio}</Ejercicio><Periodo>{periodo}</Periodo><Tipo>{tipo}</Tipo>'
         f'</{operacion}>'
         '</soap:Body></soap:Envelope>'
     ).encode('utf-8')
 
 
-def _call_smv(operacion: str, ejercicio: int, tipo: str, cache_dir: Path) -> list[dict] | None:
-    """Llama una operación SOAP para un ejercicio anual; cachea en disco."""
-    cache_file = cache_dir / f"{operacion}_{ejercicio}_{tipo}.json"
+def _call_smv(operacion: str, ejercicio: int, periodo: str, tipo: str,
+              cache_dir: Path) -> list[dict] | None:
+    """Llama una operación SOAP; cachea en disco. Devuelve la lista de filas."""
+    cache_file = cache_dir / f"{operacion}_{ejercicio}_{tipo}_{periodo}.json"
     if cache_file.exists():
         try:
             return json.loads(cache_file.read_text(encoding='utf-8'))
@@ -109,7 +115,7 @@ def _call_smv(operacion: str, ejercicio: int, tipo: str, cache_dir: Path) -> lis
 
     req = urllib.request.Request(
         SMV_ENDPOINT,
-        data=_soap_envelope(operacion, ejercicio, tipo),
+        data=_soap_envelope(operacion, ejercicio, periodo, tipo),
         headers={
             "Content-Type": "text/xml; charset=utf-8",
             "SOAPAction": f'"{SMV_NAMESPACE}{operacion}"',
@@ -119,22 +125,22 @@ def _call_smv(operacion: str, ejercicio: int, tipo: str, cache_dir: Path) -> lis
         with urllib.request.urlopen(req, timeout=SMV_TIMEOUT_S) as resp:
             raw = resp.read().decode('utf-8', errors='replace')
     except (urllib.error.URLError, TimeoutError, OSError) as e:
-        logger.warning(f"SMV {operacion} {ejercicio} {tipo} falló: {e}")
+        logger.warning(f"SMV {operacion} {ejercicio} {tipo} P={periodo} falló: {e}")
         return None
 
     m = re.search(rf'<{operacion}Result>(.*?)</{operacion}Result>', raw, re.DOTALL)
     if not m:
-        logger.warning(f"SMV {operacion} {ejercicio} {tipo}: respuesta sin Result")
+        logger.warning(f"SMV {operacion} {ejercicio} {tipo} P={periodo}: sin Result")
         return None
     try:
         data = json.loads(unescape(m.group(1)))
     except json.JSONDecodeError as e:
-        logger.warning(f"SMV {operacion} {ejercicio} {tipo}: JSON inválido: {e}")
+        logger.warning(f"SMV {operacion} {ejercicio} {tipo} P={periodo}: JSON inválido: {e}")
         return None
 
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_file.write_text(json.dumps(data), encoding='utf-8')
-    logger.info(f"SMV {operacion} {ejercicio} {tipo}: {len(data)} filas, cacheado")
+    logger.info(f"SMV {operacion} {ejercicio} {tipo} P={periodo}: {len(data)} filas, cacheado")
     return data
 
 
@@ -146,8 +152,12 @@ def _amount(rows: list[dict], cuenta: str, monto_field: str = "Monto1"):
     return None
 
 
-def _map_year(rpj: str, pnl, bal, flow, fiscal_year: int) -> dict | None:
-    """Filtra por RPJ y mapea cuentas. Retorna None si faltan métricas críticas."""
+def _map_period(rpj: str, pnl, bal, flow, fiscal_year: int,
+                quarter: int | None) -> dict | None:
+    """Filtra por RPJ y mapea cuentas. Retorna None si faltan métricas críticas.
+
+    quarter=None indica que es un período anual; quarter=1..4 indica un trimestre.
+    """
     if not pnl or not bal:
         return None
     pnl_e = [r for r in pnl if r.get('RPJ') == rpj]
@@ -188,6 +198,7 @@ def _map_year(rpj: str, pnl, bal, flow, fiscal_year: int) -> dict | None:
 
     return {
         "fiscal_year": fiscal_year,
+        "quarter": quarter,
         "revenue": revenue,
         "ebitda": ebitda,
         "net_income": net_income,
@@ -202,74 +213,95 @@ def _map_year(rpj: str, pnl, bal, flow, fiscal_year: int) -> dict | None:
     }
 
 
-def fetch_smv_fundamentals(rpj: str, years_back: int = 10,
-                           current_year: int | None = None,
-                           tipo: str = "C",
-                           cache_dir: Path | str | None = None) -> dict | None:
-    """
-    Descarga fundamentales anuales para una empresa peruana desde SMV.
-
-    Intenta primero EEFF Consolidados (Tipo C). Si la empresa no aparece
-    en consolidados (típico en empresas sin subsidiarias), cae automáticamente
-    a Individual (Tipo I).
+def fetch_estados_financieros(
+    ticker: str,
+    desde: int,
+    hasta: int,
+    tipo: str = "consolidado",
+    periodicidad: str = "anual",
+    cache_dir: Path | str | None = None,
+) -> dict | None:
+    """Descarga estados financieros para una empresa peruana desde SMV.
 
     Args:
-        rpj: identificador SMV de la empresa. NO confundir con el RUC: el
-            RPJ es un código corto interno de SMV (ej. "B30006" para Alicorp,
-            cuyo RUC es 20100055237).
-        years_back: cuántos años hacia atrás (default 10).
-        current_year: año más reciente; si None, usa el año actual.
-        tipo: "C" (consolidado) o "I" (individual). Default "C" con cascada a "I".
-        cache_dir: directorio para cachear las respuestas SOAP. Si es None,
-            usa la variable de entorno SMV_PERU_CACHE_DIR; si tampoco está
-            definida, cae al user cache dir estándar del SO (en macOS,
-            ~/Library/Caches/smv-peru).
+        ticker: ticker BVL (ej. ``"ALICORC1"``). Ver
+            ``smv_peru.empresas.EMPRESAS`` para la lista actual.
+        desde: año fiscal inicial (inclusive).
+        hasta: año fiscal final (inclusive).
+        tipo: ``"consolidado"`` (default) o ``"individual"``. Si "consolidado"
+            no devuelve datos, se reintenta con "individual" automáticamente.
+        periodicidad: ``"anual"`` (default) o ``"trimestral"``.
+        cache_dir: directorio donde cachear respuestas SOAP. Si es ``None``,
+            usa la variable de entorno ``SMV_PERU_CACHE_DIR``; si tampoco
+            está definida, cae al user cache dir estándar del SO (en macOS,
+            ``~/Library/Caches/smv-peru``).
 
     Returns:
         dict con keys:
-            "years": lista de dicts (uno por año fiscal), ordenada por
-                fiscal_year ascendente.
-            "info": dict reservado para metadatos futuros (vacío por ahora).
-        Cada elemento de "years" contiene:
-            fiscal_year (int): año fiscal.
-            revenue, ebitda, net_income, total_debt, equity, total_assets,
-                fcf (float | None): MONTOS EN MILES de la moneda reportada
-                (típicamente soles peruanos). Por ejemplo, revenue=13_655_764
-                significa S/. 13.66 mil millones.
-            eps (float | None): utilidad por acción, en unidades base.
-            current_ratio, roe, roic (float | None): ratios DECIMALES, no
-                porcentajes. ROE=0.14 significa 14%.
+            ``"periods"``: lista de dicts (un período por entrada), ordenada
+                cronológicamente.
+            ``"info"``: dict reservado para metadatos futuros.
 
-        Devuelve None si no se obtuvieron datos para ningún año (ni en
+        Cada período contiene:
+            ``fiscal_year`` (int): año fiscal.
+            ``quarter`` (int | None): ``None`` para anual; 1, 2, 3 o 4 para
+                trimestral.
+            ``revenue``, ``ebitda``, ``net_income``, ``total_debt``, ``equity``,
+                ``total_assets``, ``fcf`` (float | None): MONTOS EN MILES de la
+                moneda reportada (típicamente soles peruanos). Por ejemplo,
+                revenue=13_655_764 significa S/. 13.66 mil millones.
+            ``eps`` (float | None): utilidad por acción, en unidades base.
+            ``current_ratio``, ``roe``, ``roic`` (float | None): ratios
+                DECIMALES, no porcentajes. ``roe=0.14`` significa 14%.
+
+        Devuelve ``None`` si no se obtuvieron datos para ningún período (ni en
         Consolidado ni en Individual).
+
+    Raises:
+        UnknownTickerError: si el ticker no está en el catálogo.
+        ValueError: si tipo o periodicidad son inválidos, o si desde > hasta.
     """
-    if current_year is None:
-        current_year = datetime.now().year
+    if tipo not in _TIPO_CODES:
+        raise ValueError(
+            f"tipo debe ser 'consolidado' o 'individual', recibido: {tipo!r}"
+        )
+    if periodicidad not in _PERIODICIDAD_PERIODOS:
+        raise ValueError(
+            f"periodicidad debe ser 'anual' o 'trimestral', recibido: {periodicidad!r}"
+        )
+    if desde > hasta:
+        raise ValueError(f"desde ({desde}) no puede ser mayor que hasta ({hasta})")
+
+    rpj = resolve_ticker(ticker)["rpj"]
+    tipo_code = _TIPO_CODES[tipo]
+    periodos = _PERIODICIDAD_PERIODOS[periodicidad]
 
     if cache_dir is None:
         cache_dir = _default_cache_dir()
     else:
         cache_dir = Path(cache_dir).expanduser()
 
-    end_year = current_year - 1
-    start_year = end_year - years_back + 1
-
-    years_data = []
-    for y in range(start_year, end_year + 1):
-        pnl = _call_smv(OP_PNL, y, tipo, cache_dir)
-        bal = _call_smv(OP_BAL, y, tipo, cache_dir)
-        flow = _call_smv(OP_FLOW, y, tipo, cache_dir)
-        yd = _map_year(rpj, pnl, bal, flow, y)
-        if yd is not None:
-            years_data.append(yd)
+    periods_data = []
+    for y in range(desde, hasta + 1):
+        for p in periodos:
+            pnl = _call_smv(OP_PNL, y, p, tipo_code, cache_dir)
+            bal = _call_smv(OP_BAL, y, p, tipo_code, cache_dir)
+            flow = _call_smv(OP_FLOW, y, p, tipo_code, cache_dir)
+            quarter = None if p == "A" else int(p)
+            yd = _map_period(rpj, pnl, bal, flow, y, quarter)
+            if yd is not None:
+                periods_data.append(yd)
 
     # Cascada: si no obtuvimos nada con Consolidado, probar Individual
-    if not years_data and tipo == "C":
-        logger.info(f"SMV: RPJ={rpj} no aparece en Consolidado, probando Individual")
-        return fetch_smv_fundamentals(rpj, years_back, current_year, tipo="I", cache_dir=cache_dir)
+    if not periods_data and tipo_code == "C":
+        logger.info(f"SMV: ticker={ticker} no aparece en Consolidado, probando Individual")
+        return fetch_estados_financieros(
+            ticker, desde, hasta,
+            tipo="individual", periodicidad=periodicidad, cache_dir=cache_dir,
+        )
 
-    if not years_data:
-        logger.warning(f"SMV: ningún año obtenido para RPJ={rpj} (ni C ni I)")
+    if not periods_data:
+        logger.warning(f"SMV: ningún período obtenido para ticker={ticker} (ni C ni I)")
         return None
 
-    return {"years": years_data, "info": {}}
+    return {"periods": periods_data, "info": {}}
