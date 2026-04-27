@@ -19,10 +19,26 @@ pip install smv-peru
 ```python
 from smv_peru import fetch_smv_fundamentals
 
-# RUC de Alicorp como ejemplo
-datos = fetch_smv_fundamentals("20100055237", years_back=10)
+# El primer argumento es el RPJ (código corto interno de SMV), NO el RUC.
+# "B30006" corresponde a Alicorp S.A.A. (RUC 20100055237).
+datos = fetch_smv_fundamentals("B30006", years_back=3, current_year=2024)
 print(datos)
 ```
+
+## Formato del output
+
+El dict devuelto tiene dos keys: `years` (lista de dicts, uno por año fiscal,
+ordenada cronológicamente) e `info` (reservado para metadata futura).
+
+Cada año contiene `fiscal_year` (int) más métricas y ratios:
+
+| Campo | Tipo | Unidad |
+|---|---|---|
+| `revenue`, `ebitda`, `net_income`, `equity`, `total_assets`, `total_debt`, `fcf` | float \| None | **Miles** de la moneda reportada por la empresa (típicamente soles). Ej. `revenue=13_655_764` ≈ S/. 13.66 mil millones. |
+| `eps` | float \| None | Utilidad por acción, unidades base. |
+| `current_ratio`, `roe`, `roic` | float \| None | **Decimales**, NO porcentajes. `roe=0.14` significa 14%. |
+
+Si la API no encuentra datos (ni en consolidado ni individual), retorna `None`.
 
 ## Desarrollo
 

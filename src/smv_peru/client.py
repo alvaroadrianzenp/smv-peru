@@ -10,6 +10,9 @@ Formato:  SOAP 1.1, devuelve JSON dentro de un string en la respuesta.
 Cache:    por defecto en el user cache dir del SO (ej. ~/Library/Caches/smv-peru
           en macOS). Configurable con el argumento `cache_dir` o la variable de
           entorno SMV_PERU_CACHE_DIR.
+Unidades: los montos vienen en MILES de la moneda reportada por la empresa
+          (típicamente soles peruanos). Los ratios (current_ratio, ROE, ROIC)
+          son decimales, no porcentajes.
 
 Cobertura v1: solo empresas con esquema contable 2D (industriales, NIIF
 estándar). Bancos (esquema 2F) y aseguradoras (2E) no están soportadas
@@ -211,7 +214,9 @@ def fetch_smv_fundamentals(rpj: str, years_back: int = 10,
     a Individual (Tipo I).
 
     Args:
-        rpj: identificador SMV de la empresa (campo 'smv_rpj' en config).
+        rpj: identificador SMV de la empresa. NO confundir con el RUC: el
+            RPJ es un código corto interno de SMV (ej. "B30006" para Alicorp,
+            cuyo RUC es 20100055237).
         years_back: cuántos años hacia atrás (default 10).
         current_year: año más reciente; si None, usa el año actual.
         tipo: "C" (consolidado) o "I" (individual). Default "C" con cascada a "I".
@@ -219,6 +224,24 @@ def fetch_smv_fundamentals(rpj: str, years_back: int = 10,
             usa la variable de entorno SMV_PERU_CACHE_DIR; si tampoco está
             definida, cae al user cache dir estándar del SO (en macOS,
             ~/Library/Caches/smv-peru).
+
+    Returns:
+        dict con keys:
+            "years": lista de dicts (uno por año fiscal), ordenada por
+                fiscal_year ascendente.
+            "info": dict reservado para metadatos futuros (vacío por ahora).
+        Cada elemento de "years" contiene:
+            fiscal_year (int): año fiscal.
+            revenue, ebitda, net_income, total_debt, equity, total_assets,
+                fcf (float | None): MONTOS EN MILES de la moneda reportada
+                (típicamente soles peruanos). Por ejemplo, revenue=13_655_764
+                significa S/. 13.66 mil millones.
+            eps (float | None): utilidad por acción, en unidades base.
+            current_ratio, roe, roic (float | None): ratios DECIMALES, no
+                porcentajes. ROE=0.14 significa 14%.
+
+        Devuelve None si no se obtuvieron datos para ningún año (ni en
+        Consolidado ni en Individual).
     """
     if current_year is None:
         current_year = datetime.now().year
