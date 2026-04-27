@@ -7,7 +7,9 @@ empresas peruanas que cotizan en BVL y los mapea al schema interno.
 
 Endpoint: https://mvnet.smv.gob.pe/ws_od_eeff/WebServiceInfoFinanciera.asmx
 Formato:  SOAP 1.1, devuelve JSON dentro de un string en la respuesta.
-Cache:    cada operación-año se guarda como data/raw/smv/{op}_{anio}.json
+Cache:    por defecto en el user cache dir del SO (ej. ~/Library/Caches/smv-peru
+          en macOS). Configurable con el argumento `cache_dir` o la variable de
+          entorno SMV_PERU_CACHE_DIR.
 
 Cobertura v1: solo empresas con esquema contable 2D (industriales, NIIF
 estándar). Bancos (esquema 2F) y aseguradoras (2E) no están soportadas
@@ -20,7 +22,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import sys
 import urllib.error
 import urllib.request
 from datetime import datetime
@@ -33,7 +37,26 @@ SMV_ENDPOINT = "https://mvnet.smv.gob.pe/ws_od_eeff/WebServiceInfoFinanciera.asm
 SMV_NAMESPACE = "http://tempuri.org/"
 SMV_TIMEOUT_S = 120
 
-CACHE_DIR = Path(__file__).resolve().parent.parent / "data" / "raw" / "smv"
+
+def _user_cache_dir(app_name: str) -> Path:
+    """Directorio de cache estándar del usuario, según convenciones del SO."""
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Caches" / app_name
+    if sys.platform == "win32":
+        local = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+        return Path(local) / app_name / "Cache"
+    # Linux y otros UNIX: XDG Base Directory Specification
+    xdg = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    return Path(xdg) / app_name
+
+
+def _default_cache_dir() -> Path:
+    """Cache_dir por defecto: env var SMV_PERU_CACHE_DIR → user cache dir del SO."""
+    env = os.environ.get("SMV_PERU_CACHE_DIR")
+    if env:
+        return Path(env).expanduser()
+    return _user_cache_dir("smv-peru")
+
 
 OP_PNL = "obtener_GanciaPerdida"
 OP_BAL = "obtener_BalanceGeneral"
@@ -72,9 +95,9 @@ def _soap_envelope(operacion: str, ejercicio: int, tipo: str = "C") -> bytes:
     ).encode('utf-8')
 
 
-def _call_smv(operacion: str, ejercicio: int, tipo: str = "C") -> list[dict] | None:
+def _call_smv(operacion: str, ejercicio: int, tipo: str, cache_dir: Path) -> list[dict] | None:
     """Llama una operación SOAP para un ejercicio anual; cachea en disco."""
-    cache_file = CACHE_DIR / f"{operacion}_{ejercicio}_{tipo}.json"
+    cache_file = cache_dir / f"{operacion}_{ejercicio}_{tipo}.json"
     if cache_file.exists():
         try:
             return json.loads(cache_file.read_text(encoding='utf-8'))
@@ -106,7 +129,7 @@ def _call_smv(operacion: str, ejercicio: int, tipo: str = "C") -> list[dict] | N
         logger.warning(f"SMV {operacion} {ejercicio} {tipo}: JSON inválido: {e}")
         return None
 
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_dir.mkdir(parents=True, exist_ok=True)
     cache_file.write_text(json.dumps(data), encoding='utf-8')
     logger.info(f"SMV {operacion} {ejercicio} {tipo}: {len(data)} filas, cacheado")
     return data
@@ -178,7 +201,8 @@ def _map_year(rpj: str, pnl, bal, flow, fiscal_year: int) -> dict | None:
 
 def fetch_smv_fundamentals(rpj: str, years_back: int = 10,
                            current_year: int | None = None,
-                           tipo: str = "C") -> dict | None:
+                           tipo: str = "C",
+                           cache_dir: Path | str | None = None) -> dict | None:
     """
     Descarga fundamentales anuales para una empresa peruana desde SMV.
 
@@ -191,18 +215,27 @@ def fetch_smv_fundamentals(rpj: str, years_back: int = 10,
         years_back: cuántos años hacia atrás (default 10).
         current_year: año más reciente; si None, usa el año actual.
         tipo: "C" (consolidado) o "I" (individual). Default "C" con cascada a "I".
+        cache_dir: directorio para cachear las respuestas SOAP. Si es None,
+            usa la variable de entorno SMV_PERU_CACHE_DIR; si tampoco está
+            definida, cae al user cache dir estándar del SO (en macOS,
+            ~/Library/Caches/smv-peru).
     """
     if current_year is None:
         current_year = datetime.now().year
+
+    if cache_dir is None:
+        cache_dir = _default_cache_dir()
+    else:
+        cache_dir = Path(cache_dir).expanduser()
 
     end_year = current_year - 1
     start_year = end_year - years_back + 1
 
     years_data = []
     for y in range(start_year, end_year + 1):
-        pnl = _call_smv(OP_PNL, y, tipo)
-        bal = _call_smv(OP_BAL, y, tipo)
-        flow = _call_smv(OP_FLOW, y, tipo)
+        pnl = _call_smv(OP_PNL, y, tipo, cache_dir)
+        bal = _call_smv(OP_BAL, y, tipo, cache_dir)
+        flow = _call_smv(OP_FLOW, y, tipo, cache_dir)
         yd = _map_year(rpj, pnl, bal, flow, y)
         if yd is not None:
             years_data.append(yd)
@@ -210,7 +243,7 @@ def fetch_smv_fundamentals(rpj: str, years_back: int = 10,
     # Cascada: si no obtuvimos nada con Consolidado, probar Individual
     if not years_data and tipo == "C":
         logger.info(f"SMV: RPJ={rpj} no aparece en Consolidado, probando Individual")
-        return fetch_smv_fundamentals(rpj, years_back, current_year, tipo="I")
+        return fetch_smv_fundamentals(rpj, years_back, current_year, tipo="I", cache_dir=cache_dir)
 
     if not years_data:
         logger.warning(f"SMV: ningún año obtenido para RPJ={rpj} (ni C ni I)")
