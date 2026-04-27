@@ -45,5 +45,5 @@ uv run python          # entra a un REPL con el paquete disponible
 
 ## Licencias
 
-- **Código:** AGPL-3.0-or-later (ver `LICENSE`).
+- **Código:** MIT (ver `LICENSE`).
 - **Datos:** los datos provienen de la SMV Perú. Esta librería es un cliente que reformatea esos datos; la atribución a la fuente es obligatoria al redistribuirlos.
