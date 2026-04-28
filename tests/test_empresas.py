@@ -44,3 +44,24 @@ def test_all_entries_have_required_fields():
         assert "nombre" in info, f"{ticker} sin nombre"
         assert info["rpj"], f"{ticker} con rpj vacío"
         assert info["nombre"], f"{ticker} con nombre vacío"
+
+
+def test_catalog_has_at_least_20_tickers():
+    """El catálogo cubre las ~20 acciones más líquidas de BVL con esquema 2D."""
+    assert len(EMPRESAS) >= 20
+
+
+def test_no_duplicate_rpj_in_catalog():
+    """Cada RPJ debe ser único: dos tickers no pueden mapear a la misma empresa."""
+    rpjs = [info["rpj"] for info in EMPRESAS.values()]
+    assert len(rpjs) == len(set(rpjs)), "Hay RPJs duplicados en el catálogo"
+
+
+def test_resolve_some_new_tickers():
+    """Smoke test: los nuevos tickers (incluyendo los que reportan Individual) resuelven."""
+    nuevos = ["AENZAC1", "BVN", "CASAGRC1", "CORAREI1", "CVERDEC1",
+              "NEXAPEC1", "ORYGENC1", "PLUZC1", "RELAPAC1", "YURAC1"]
+    for ticker in nuevos:
+        info = resolve_ticker(ticker)
+        assert info["rpj"], f"{ticker} sin rpj"
+        assert info["nombre"], f"{ticker} sin nombre"

@@ -53,22 +53,43 @@ if diferencias_de_cambio:
 
 ## Tickers soportados
 
-Por ahora la librería soporta empresas industriales con esquema contable 2D de SMV. Se irá ampliando conforme se añada soporte para más esquemas (bancos = 2F, aseguradoras = 2E).
+Por ahora la librería soporta empresas que reportan a SMV con esquema contable **2D** (industriales, NIIF estándar). Algunas reportan en modo **Consolidado** (matrices con subsidiarias) y otras solo en **Individual** (subsidiarias de matrices extranjeras como Cerro Verde, PLUZ Energía, Nexa). La librería prueba primero Consolidado y cae automáticamente a Individual si no hay datos, así que no necesitas preocuparte por la diferencia al consumir la API.
 
-| Ticker | Empresa |
-|---|---|
-| `ALICORC1` | Alicorp S.A.A. |
-| `BACKUSI1` | Backus & Johnston |
-| `CPACASC1` | Cementos Pacasmayo |
-| `ENGEPEC1` | Engie Perú |
-| `FERREYC1` | Ferreycorp |
-| `INRETC1`  | InRetail Perú |
-| `LUSURC1`  | Luz del Sur |
-| `MINSURI1` | Minsur |
-| `UNACEMC1` | UNACEM |
-| `VOLCABC1` | Volcan Compañía Minera |
+| Ticker | Empresa | Sector |
+|---|---|---|
+| `AENZAC1` | AENZA (ex Graña y Montero) | construcción / concesiones |
+| `ALICORC1` | Alicorp | consumo masivo / alimentos |
+| `BACKUSI1` | Backus & Johnston | bebidas |
+| `BVN` | Buenaventura | minería polimetálica |
+| `CASAGRC1` | Casa Grande | agroindustria / azucarera |
+| `CORAREI1` | Aceros Arequipa | siderurgia |
+| `CPACASC1` | Cementos Pacasmayo | cementos |
+| `CVERDEC1` | Sociedad Minera Cerro Verde | minería de cobre |
+| `ENGEPEC1` | Engie Perú | electricidad / generación |
+| `FERREYC1` | Ferreycorp | distribución industrial |
+| `INRETC1` | InRetail Perú | retail / supermercados |
+| `LUSURC1` | Luz del Sur | electricidad / distribución |
+| `MINSURI1` | Minsur | minería de estaño |
+| `NEXAPEC1` | Nexa Resources Perú (ex Milpo) | minería de zinc |
+| `ORYGENC1` | Orygen Perú (ex Enel Generación) | electricidad / generación |
+| `PLUZC1` | Pluz Energía Perú (ex Enel Distribución) | electricidad / distribución |
+| `RELAPAC1` | Refinería La Pampilla | refinación de petróleo |
+| `UNACEMC1` | UNACEM | cementos |
+| `VOLCABC1` | Volcan Compañía Minera | minería polimetálica |
+| `YURAC1` | Yura | cementos |
 
 Si el ticker no está en el catálogo, se levanta `UnknownTickerError` con la lista completa en el mensaje.
+
+### Soporte futuro
+
+Estas empresas son muy líquidas en BVL pero usan **otros esquemas contables** que la librería todavía no parsea:
+
+- **Bancos (esquema 2F):** Credicorp / BCP, BBVA Perú, Interbank, Scotiabank Perú.
+- **Aseguradoras (esquema 2E):** Pacífico Seguros, Rímac Seguros.
+
+Cuando se añada soporte para 2F y 2E, estos tickers entrarán al catálogo. Mientras tanto, intentar usarlos no funcionaría aunque estuvieran listados — por eso quedan fuera por ahora.
+
+Por otro lado, hay empresas que cotizan en BVL pero **no publican EEFF en el endpoint SMV usado por esta librería** (ya sea porque su matriz consolidante reporta en otro país o por régimen especial). En esos casos `fetch_estados_financieros` retornaría `None`. Ejemplos detectados: Telefónica del Perú (deslistada de trading activo), Southern Copper (ADR sin EEFF en SMV).
 
 ## Formato del output
 
