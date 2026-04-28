@@ -53,7 +53,11 @@ if diferencias_de_cambio:
 
 ## Tickers soportados
 
-Por ahora la librería soporta empresas que reportan a SMV con esquema contable **2D** (industriales, NIIF estándar). Algunas reportan en modo **Consolidado** (matrices con subsidiarias) y otras solo en **Individual** (subsidiarias de matrices extranjeras como Cerro Verde, PLUZ Energía, Nexa). La librería prueba primero Consolidado y cae automáticamente a Individual si no hay datos, así que no necesitas preocuparte por la diferencia al consumir la API.
+La librería despacha automáticamente al esquema correcto según el ticker:
+- **Esquema 2D** (industriales / NIIF estándar): Alicorp, UNACEM, Buenaventura, etc.
+- **Esquema 2F** (bancos): BBVA Perú, BCP, Scotiabank Perú.
+
+Cada período del output expone una key `"schema"` (`"2D"` o `"2F"`) para que sepas qué set de campos esperar. Algunas empresas reportan en modo **Consolidado** (matrices con subsidiarias) y otras solo en **Individual** (subsidiarias de matrices extranjeras como Cerro Verde, PLUZ Energía, Nexa). La librería prueba primero Consolidado y cae automáticamente a Individual si no hay datos.
 
 | Ticker | Empresa | Sector |
 |---|---|---|
@@ -78,16 +82,23 @@ Por ahora la librería soporta empresas que reportan a SMV con esquema contable 
 | `VOLCABC1` | Volcan Compañía Minera | minería polimetálica |
 | `YURAC1` | Yura | cementos |
 
+**Bancos (esquema 2F):**
+
+| Ticker | Empresa | Esquema |
+|---|---|---|
+| `BBVAC1` | BBVA Perú | 2F |
+| `CREDITC1` | Banco de Crédito del Perú (BCP) | 2F |
+| `SCOTIAC1` | Scotiabank Perú | 2F |
+
 Si el ticker no está en el catálogo, se levanta `UnknownTickerError` con la lista completa en el mensaje.
 
 ### Soporte futuro
 
 Estas empresas son muy líquidas en BVL pero usan **otros esquemas contables** que la librería todavía no parsea:
 
-- **Bancos (esquema 2F):** Credicorp / BCP, BBVA Perú, Interbank, Scotiabank Perú.
 - **Aseguradoras (esquema 2E):** Pacífico Seguros, Rímac Seguros.
 
-Cuando se añada soporte para 2F y 2E, estos tickers entrarán al catálogo. Mientras tanto, intentar usarlos no funcionaría aunque estuvieran listados — por eso quedan fuera por ahora.
+Cuando se añada soporte para 2E, estos tickers entrarán al catálogo.
 
 Por otro lado, hay empresas que cotizan en BVL pero **no publican EEFF en el endpoint SMV usado por esta librería** (ya sea porque su matriz consolidante reporta en otro país o por régimen especial). En esos casos `fetch_estados_financieros` retornaría `None`. Ejemplos detectados: Telefónica del Perú (deslistada de trading activo), Southern Copper (ADR sin EEFF en SMV).
 
@@ -100,14 +111,25 @@ El dict devuelto tiene dos keys: `periods` (lista de dicts, uno por período) e 
 - Ratios en **decimales**, NO porcentajes. Ej. `roe = 0.14` significa 14%.
 - Algunos signos siguen la convención SMV (gastos y salidas de caja vienen negativos): `cogs`, `interest_expense`, `income_tax`, `capex_ppe`, `capex_intangibles`, `debt_repaid`. Los campos derivados de "salidas" agregadas (`dividends_paid`, `interest_paid`, `taxes_paid`, `capex_total`) se exponen en valor absoluto positivo.
 
-Cada período contiene los siguientes grupos de campos:
+Cada período contiene un campo `schema` (`"2D"` o `"2F"`) y los grupos de campos correspondientes a ese esquema. **Los industriales (2D)** y **los bancos (2F)** tienen sets distintos.
 
-### Identificadores
+### Identificadores (ambos esquemas)
 
 | Campo | Tipo | Descripción |
 |---|---|---|
+| `schema` | str | `"2D"` (industriales) o `"2F"` (bancos). |
 | `fiscal_year` | int | Año fiscal del período. |
 | `quarter` | int \| None | `None` si es anual; `1`–`4` si es trimestral. |
+
+### Datos trimestrales: siempre period-only
+
+SMV publica el Cash Flow trimestral en modo **YTD acumulado** (Q1 = enero-marzo, Q2 = enero-junio, ..., Q4 = enero-diciembre). Esta librería **detecta el régimen automáticamente** y devuelve siempre datos **period-only**: para Q2-Q4 con CF YTD, descarga el trimestre anterior y resta. Para Q1 no se transforma (ya es period-only). El balance (cuentas de stock) nunca se transforma — es un saldo puntual al cierre del trimestre.
+
+### Promedios para ROE/ROIC/ROA/NIM (uso de `Monto2`)
+
+SMV envía en cada respuesta `Monto1` (período actual) y `Monto2` (comparativo del período anterior). Las métricas de rentabilidad usan `avg(stock) = (Monto1 + Monto2) / 2` para producir ratios anualizados estándar sin llamadas SOAP adicionales.
+
+## Campos del esquema 2D (industriales)
 
 ### Estado de Resultados
 
@@ -170,6 +192,81 @@ Cada período contiene los siguientes grupos de campos:
 | `roe` | `net_income / equity` |
 | `roic` | `net_income / (equity + total_debt)` |
 
+### Métricas YoY (Year-over-Year)
+
+| Campo | Descripción |
+|---|---|
+| `revenue_yoy` | Crecimiento de ingresos vs. año anterior. |
+| `net_income_yoy` | Crecimiento de utilidad neta. |
+| `equity_yoy` | Crecimiento de patrimonio. |
+
+## Campos del esquema 2F (bancos)
+
+### Estado de Resultados (P&L bancario)
+
+| Campo | Descripción |
+|---|---|
+| `interest_income` | Ingresos por intereses. |
+| `interest_expense` | Gastos por intereses (negativo). |
+| `net_interest_income` | NII = ingresos − gastos por intereses (margen bruto). |
+| `loan_loss_provisions` | Provisión para créditos (negativo). |
+| `fee_income_net` | Comisiones netas. |
+| `trading_income` | Resultado por operaciones financieras (ROF). |
+| `operating_expenses` | Gastos de administración (negativo). |
+| `operating_income`, `pretax_income`, `income_tax`, `net_income` | Resultados de operación, antes de impuestos, impuesto y utilidad neta. |
+| `eps`, `eps_diluted` | Utilidad por acción básica y diluida. |
+
+### Balance bancario
+
+| Campo | Descripción |
+|---|---|
+| `cash` | Disponibles (caja + BCRP). |
+| `interbank_funds` | Fondos interbancarios (activo). |
+| `investments_fvtpl`, `investments_afs`, `investments_htm` | Inversiones por categoría contable. |
+| `loans_st`, `loans_lt`, `loans_net` | Cartera de créditos neto: corriente, no corriente y total. |
+| `performing_loans`, `refinanced_loans`, `overdue_loans`, `judicial_loans` | Componentes brutos de cartera (vigentes, refinanciados, vencidos, judicial). |
+| `gross_loans` | Cartera bruta = suma de los 4 componentes anteriores. |
+| `ppe`, `intangibles`, `total_assets` | Activos físicos, intangibles y total. |
+| `deposits` | Obligaciones con el público (depósitos). |
+| `interbank_funds_payable` | Fondos interbancarios (pasivo). |
+| `deposits_financial_system` | Depósitos de empresas del sistema financiero. |
+| `financial_debt_st`, `financial_debt_lt`, `total_liabilities` | Deuda financiera y total pasivos. |
+| `share_capital`, `reserves`, `retained_earnings`, `equity` | Patrimonio. |
+
+### Flujo de Efectivo bancario (método indirecto)
+
+| Campo | Descripción |
+|---|---|
+| `dna` | Depreciación y amortización. |
+| `operating_cf`, `investing_cf`, `financing_cf` | Flujos por actividad. |
+| `deposits_change` | Aumento/disminución neto de depósitos en el período. |
+| `loans_change` | Cambio neto en cartera de créditos. |
+| `dividends_paid_fin` | Dividendos pagados (negativo). |
+| `dividends_paid` | Lo anterior, expuesto en valor absoluto positivo. |
+| `end_cash` | Efectivo al cierre. |
+
+### Métricas derivadas bancarias
+
+| Campo | Fórmula | Notas |
+|---|---|---|
+| `nim` | `net_interest_income / avg(loans_net)` | Net Interest Margin (anualizado). Usa promedio con `Monto2`. |
+| `efficiency_ratio` | `\|operating_expenses\| / (NII + fee_income_net + trading_income)` | Eficiencia operativa. |
+| `npl_ratio` | `(overdue_loans + judicial_loans) / loans_net` | Proxy razonable (cercano al real con tolerancia ~0.1pp). |
+| `loan_to_deposit_ratio` | `loans_net / deposits` | Apalancamiento del banco. |
+| `equity_to_assets` | `equity / total_assets` | Proxy de solvencia (no es CET1 regulatorio). |
+| `effective_tax_rate` | `\|income_tax\| / pretax_income` | Tasa efectiva de impuestos. |
+| `cost_of_risk` | `\|loan_loss_provisions\| / avg(loans_net)` | Costo del riesgo crediticio. |
+| `roa` | `net_income / avg(total_assets)` | Anualizado. |
+| `roe` | `net_income / avg(equity)` | Anualizado. |
+| `payout_ratio` | `dividends_paid / net_income` | |
+| `interest_income_yoy`, `net_income_yoy`, `loans_yoy`, `deposits_yoy`, `equity_yoy` | crecimiento YoY | Calculados con `Monto2`. |
+
+### Limitaciones del esquema 2F
+
+- **CET1 / capital regulatorio**: no calculable desde SMV (requiere RWA — Activos Ponderados por Riesgo, que no expone). Ver SBS para datos regulatorios. Mientras tanto, `equity_to_assets` sirve como proxy de solvencia.
+- **Cobertura de provisiones**: SMV expone "cartera neta" pero no el stock acumulado de provisiones específicas para créditos incobrables (está embebido). No se puede calcular `coverage_ratio` desde este endpoint.
+- **`loans_net` se compone**: SMV publica la cartera dividida en corriente (`1F0111`) y no corriente (`1F1902`). La librería las suma para exponer `loans_net` como total fiel al PDF auditado.
+
 ### `raw_accounts`: cuentas adicionales no expuestas como amigables
 
 Cada período expone también un dict `raw_accounts` con todas las cuentas que SMV publica y que **no** están cubiertas por un campo amigable (ni con monto cero), usando el `DescripcionCuenta` oficial de SMV:
@@ -187,17 +284,19 @@ Esto permite acceder a cuentas raras o sectoriales sin esperar a que la librerí
 
 ### Auditar el mapeo amigable → código SMV
 
-Cada campo amigable con origen 1:1 en SMV está en `FIELDS_TO_CODES`:
+Cada esquema tiene su propio mapeo:
 
 ```python
-from smv_peru import FIELDS_TO_CODES
+from smv_peru import FIELDS_TO_CODES_2D, FIELDS_TO_CODES_2F
 
-FIELDS_TO_CODES["cash"]          # "1D0109"  → Efectivo y Equivalentes al Efectivo
-FIELDS_TO_CODES["gross_profit"]  # "2D02ST"  → Ganancia (Pérdida) Bruta
-FIELDS_TO_CODES["dividends_paid_fin"]  # "3D0305"  → Dividendos Pagados
+FIELDS_TO_CODES_2D["cash"]          # "1D0109"  → Efectivo y Equivalentes al Efectivo (industrial)
+FIELDS_TO_CODES_2F["cash"]          # "1F0101"  → Disponibles (banco)
+FIELDS_TO_CODES_2F["loans_st"]      # "1F0111"  → Cartera de créditos neto (corriente)
 ```
 
-Los **derivados** (márgenes, ratios, totales agregados) no están en `FIELDS_TO_CODES` porque se calculan desde otros campos. Su fórmula está documentada en la tabla de "Métricas derivadas" arriba.
+`FIELDS_TO_CODES` (sin sufijo) es alias de `FIELDS_TO_CODES_2D` por compatibilidad.
+
+Los **derivados** (márgenes, ratios, NIM, NPL, etc.) no están en estos dicts porque se calculan desde otros campos. Sus fórmulas están documentadas en las tablas de "Métricas derivadas" arriba.
 
 ## Desarrollo
 

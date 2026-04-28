@@ -203,6 +203,63 @@ def test_trimestral_revenues_sum_close_to_annual():
 
 
 # ---------------------------------------------------------------------------
+# Normalizacion trimestral: el CF debe ser period-only (no YTD)
+# ---------------------------------------------------------------------------
+
+def test_trimestral_cf_is_period_only_not_ytd():
+    """El CF trimestral debe ser period-only despues de normalizacion.
+    SMV publica YTD; la libreria detecta y resta el trimestre anterior.
+    Verificacion: suma(Q1..Q4 CF) = Anual CF.
+    """
+    annual = fetch_estados_financieros(
+        "ALICORC1", desde=2023, hasta=2023, cache_dir=FIXTURES,
+    )["periods"][0]
+    quarterly = fetch_estados_financieros(
+        "ALICORC1", desde=2023, hasta=2023,
+        periodicidad="trimestral", cache_dir=FIXTURES,
+    )["periods"]
+    # operating_cf
+    sum_op = sum(p["operating_cf"] for p in quarterly)
+    assert abs(sum_op - annual["operating_cf"]) < 1
+    # capex_ppe
+    sum_capex = sum(p["capex_ppe"] for p in quarterly)
+    assert abs(sum_capex - annual["capex_ppe"]) < 1
+    # cash_from_customers
+    sum_customers = sum(p["cash_from_customers"] for p in quarterly)
+    assert abs(sum_customers - annual["cash_from_customers"]) < 100  # tolerancia minima
+
+
+def test_trimestral_q1_cf_unchanged():
+    """Para Q1 no hay normalizacion (ya es period-only por definicion,
+    no hay Q0 anterior)."""
+    quarterly = fetch_estados_financieros(
+        "ALICORC1", desde=2023, hasta=2023,
+        periodicidad="trimestral", cache_dir=FIXTURES,
+    )["periods"]
+    q1 = next(p for p in quarterly if p["quarter"] == 1)
+    # Alicorp Q1 2023 operating_cf = -18,937 (segun fixtures)
+    assert q1["operating_cf"] == -18937
+
+
+def test_trimestral_q4_cf_is_period_only_after_normalization():
+    """Antes de la normalizacion, Q4 CF era YTD acumulado = Anual CF.
+    Despues de normalizacion, Q4 = solo Q4 (Anual − Q3 YTD original).
+    Para Alicorp: Q4_only = 1,626,530 ≠ Anual 1,518,758.
+    """
+    quarterly = fetch_estados_financieros(
+        "ALICORC1", desde=2023, hasta=2023,
+        periodicidad="trimestral", cache_dir=FIXTURES,
+    )["periods"]
+    q4 = next(p for p in quarterly if p["quarter"] == 4)
+    annual = fetch_estados_financieros(
+        "ALICORC1", desde=2023, hasta=2023, cache_dir=FIXTURES,
+    )["periods"][0]
+    assert q4["operating_cf"] != annual["operating_cf"]  # Q4 != Anual ahora
+    # El valor especifico de Q4 only para Alicorp:
+    assert q4["operating_cf"] == 1626530
+
+
+# ---------------------------------------------------------------------------
 # Validaciones de input
 # ---------------------------------------------------------------------------
 
