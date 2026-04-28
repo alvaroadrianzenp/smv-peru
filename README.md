@@ -34,8 +34,21 @@ datos_q = fetch_estados_financieros(
     periodicidad="trimestral",
 )
 
+# Recorre los períodos y consume los campos amigables
 for p in datos["periods"]:
-    print(p["fiscal_year"], p["revenue"])
+    print(
+        p["fiscal_year"],
+        f"revenue={p['revenue']:,.0f}",
+        f"gross_margin={p['gross_margin']:.1%}",
+        f"net_debt={p['net_debt']:,.0f}",
+        f"fcf={p['fcf']:,.0f}",
+    )
+
+# Acceso a cuentas adicionales (raw) que no están como amigables
+ultimo = datos["periods"][-1]
+diferencias_de_cambio = ultimo["raw_accounts"].get("2D0410")
+if diferencias_de_cambio:
+    print(diferencias_de_cambio["nombre"], diferencias_de_cambio["monto"])
 ```
 
 ## Tickers soportados
@@ -59,19 +72,111 @@ Si el ticker no está en el catálogo, se levanta `UnknownTickerError` con la li
 
 ## Formato del output
 
-El dict devuelto tiene dos keys: `periods` (lista de dicts, uno por período) e `info` (reservado para metadata futura).
+El dict devuelto tiene dos keys: `periods` (lista de dicts, uno por período) e `info` (reservado para metadata futura). Si la API no encuentra datos (ni en consolidado ni individual), retorna `None`.
 
-Cada período contiene:
+**Convenciones de unidades:**
+- Montos en **miles** de la moneda reportada por la empresa (típicamente soles). Ej. `revenue = 13_655_764` ≈ S/. 13.66 mil millones.
+- Ratios en **decimales**, NO porcentajes. Ej. `roe = 0.14` significa 14%.
+- Algunos signos siguen la convención SMV (gastos y salidas de caja vienen negativos): `cogs`, `interest_expense`, `income_tax`, `capex_ppe`, `capex_intangibles`, `debt_repaid`. Los campos derivados de "salidas" agregadas (`dividends_paid`, `interest_paid`, `taxes_paid`, `capex_total`) se exponen en valor absoluto positivo.
+
+Cada período contiene los siguientes grupos de campos:
+
+### Identificadores
 
 | Campo | Tipo | Descripción |
 |---|---|---|
 | `fiscal_year` | int | Año fiscal del período. |
-| `quarter` | int \| None | `None` si es anual; `1`, `2`, `3` o `4` si es trimestral. |
-| `revenue`, `ebitda`, `net_income`, `equity`, `total_assets`, `total_debt`, `fcf` | float \| None | **Miles** de la moneda reportada por la empresa (típicamente soles). Ej. `revenue=13_655_764` ≈ S/. 13.66 mil millones. |
-| `eps` | float \| None | Utilidad por acción, unidades base. |
-| `current_ratio`, `roe`, `roic` | float \| None | **Decimales**, NO porcentajes. `roe=0.14` significa 14%. |
+| `quarter` | int \| None | `None` si es anual; `1`–`4` si es trimestral. |
 
-Si la API no encuentra datos (ni en consolidado ni individual), retorna `None`.
+### Estado de Resultados
+
+| Campo | Descripción |
+|---|---|
+| `revenue` | Ingresos de actividades ordinarias. |
+| `cogs` | Costo de ventas (negativo). |
+| `gross_profit` | Ganancia bruta. |
+| `admin_expenses`, `selling_expenses` | Gastos de administración y de ventas/distribución (negativos). |
+| `other_op_income`, `other_op_expenses` | Otros ingresos/gastos operativos. |
+| `operating_income` | Ganancia operativa. |
+| `interest_income`, `interest_expense` | Ingresos y gastos financieros. |
+| `pretax_income`, `income_tax`, `net_income` | Resultado antes de impuestos, impuesto a las ganancias y utilidad neta. |
+| `eps` | Utilidad básica por acción ordinaria, en unidades base. |
+| `ebitda` | Aproximado a `operating_income` (D&A no expuesto por la API SMV). |
+
+### Estado de Situación Financiera (Balance)
+
+| Campo | Descripción |
+|---|---|
+| `cash`, `accounts_receivable`, `inventory` | Efectivo, cuentas por cobrar comerciales, inventarios. |
+| `current_assets`, `noncurrent_assets`, `total_assets` | Subtotales y total de activos. |
+| `ppe`, `intangibles` | Propiedades planta y equipo, intangibles distintos de plusvalía. |
+| `accounts_payable` | Cuentas por pagar comerciales. |
+| `debt_short_term`, `debt_long_term`, `total_debt` | Deuda con costo (Otros Pasivos Financieros) corriente, no corriente y total. |
+| `current_liab`, `noncurrent_liab`, `total_liabilities` | Subtotales y total de pasivos. |
+| `share_capital`, `retained_earnings`, `reserves`, `equity` | Capital emitido, resultados acumulados, otras reservas, patrimonio total. |
+
+### Flujo de Efectivo (método directo)
+
+| Campo | Descripción |
+|---|---|
+| `cash_from_customers` | Cobranzas a clientes (`3D0101`). |
+| `cash_to_suppliers`, `cash_to_employees` | Pagos a proveedores y empleados (negativos). |
+| `interest_paid_op`, `taxes_paid_op` | Intereses e impuestos pagados clasificados en operación. |
+| `operating_cf` | Flujo neto de operación. |
+| `ppe_proceeds`, `capex_ppe`, `capex_intangibles`, `capex_total` | Venta y compra de PP&E e intangibles. `capex_total` = `\|capex_ppe\| + \|capex_intangibles\|`. |
+| `investing_cf` | Flujo neto de inversión. |
+| `dividends_paid_fin`, `interest_paid_fin` | Dividendos e intereses pagados clasificados en financiación. |
+| `debt_issued`, `debt_repaid` | Préstamos obtenidos y amortizados. |
+| `financing_cf` | Flujo neto de financiación. |
+| `end_cash` | Efectivo al cierre del ejercicio. |
+| `dividends_paid`, `interest_paid`, `taxes_paid` | Salidas agregadas (positivas) sumando operación + financiación. |
+| `fcf` | `operating_cf + capex_ppe + capex_intangibles` (capex viene negativo). |
+
+### Métricas derivadas
+
+| Campo | Fórmula |
+|---|---|
+| `gross_margin` | `gross_profit / revenue` |
+| `operating_margin` | `operating_income / revenue` |
+| `net_margin` | `net_income / revenue` |
+| `current_ratio` | `current_assets / current_liab` |
+| `quick_ratio` | `(cash + accounts_receivable) / current_liab` |
+| `net_debt` | `total_debt - cash` |
+| `interest_coverage` | `operating_income / \|interest_expense\|` |
+| `effective_tax_rate` | `\|income_tax\| / pretax_income` |
+| `payout_ratio` | `dividends_paid / net_income` |
+| `capex_intensity` | `capex_total / revenue` |
+| `roe` | `net_income / equity` |
+| `roic` | `net_income / (equity + total_debt)` |
+
+### `raw_accounts`: cuentas adicionales no expuestas como amigables
+
+Cada período expone también un dict `raw_accounts` con todas las cuentas que SMV publica y que **no** están cubiertas por un campo amigable (ni con monto cero), usando el `DescripcionCuenta` oficial de SMV:
+
+```python
+period["raw_accounts"] == {
+    "2D0410": {"nombre": "Diferencias de Cambio Neto",          "monto": 84504.0},
+    "1D0114": {"nombre": "Otros Activos Financieros",           "monto": 78224.0},
+    "3D0322": {"nombre": "Pasivos por Arrendamiento Financiero","monto": -94535.0},
+    # ... ~60 cuentas adicionales en Alicorp 2023
+}
+```
+
+Esto permite acceder a cuentas raras o sectoriales sin esperar a que la librería las exponga, y deja la puerta abierta a empresas con esquemas distintos (bancos, aseguradoras) cuando los soportemos.
+
+### Auditar el mapeo amigable → código SMV
+
+Cada campo amigable con origen 1:1 en SMV está en `FIELDS_TO_CODES`:
+
+```python
+from smv_peru import FIELDS_TO_CODES
+
+FIELDS_TO_CODES["cash"]          # "1D0109"  → Efectivo y Equivalentes al Efectivo
+FIELDS_TO_CODES["gross_profit"]  # "2D02ST"  → Ganancia (Pérdida) Bruta
+FIELDS_TO_CODES["dividends_paid_fin"]  # "3D0305"  → Dividendos Pagados
+```
+
+Los **derivados** (márgenes, ratios, totales agregados) no están en `FIELDS_TO_CODES` porque se calculan desde otros campos. Su fórmula está documentada en la tabla de "Métricas derivadas" arriba.
 
 ## Desarrollo
 
@@ -92,6 +197,7 @@ uv run python          # entra a un REPL con el paquete disponible
 - [x] Soporte para periodicidad anual y trimestral.
 - [x] Selección explícita de estados consolidados o individuales.
 - [x] Catálogo de tickers BVL → SMV.
+- [x] Cuentas extendidas (~50 campos amigables) + métricas derivadas (márgenes, ratios) + `raw_accounts` para cuentas no expuestas.
 - [ ] Soporte para esquema 2F (bancos: BAP, BCP, BBVA, Interbank).
 - [ ] Repo en GitHub público + GitHub Actions (CI).
 - [ ] Publicar `0.1.0` en PyPI.

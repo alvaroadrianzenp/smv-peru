@@ -32,16 +32,128 @@ def test_anual_returns_periods_in_chronological_order():
 
 
 def test_anual_each_period_has_complete_schema():
+    """Schema completo: 13 campos legacy + nuevos amigables + métricas derivadas
+    + raw_accounts."""
     result = fetch_estados_financieros(
         "ALICORC1", desde=2021, hasta=2023, cache_dir=FIXTURES,
     )
     expected_keys = {
-        "fiscal_year", "quarter", "revenue", "ebitda", "net_income", "eps",
-        "total_debt", "equity", "total_assets", "current_ratio",
-        "fcf", "roe", "roic",
+        # Identificadores
+        "fiscal_year", "quarter",
+        # Legacy (compatibilidad con la versión anterior)
+        "revenue", "ebitda", "net_income", "eps", "total_debt", "equity",
+        "total_assets", "current_ratio", "fcf", "roe", "roic",
+        # Nuevos: P&L
+        "cogs", "gross_profit", "admin_expenses", "selling_expenses",
+        "operating_income", "interest_income", "interest_expense",
+        "pretax_income", "income_tax",
+        # Nuevos: Balance
+        "cash", "accounts_receivable", "inventory", "ppe", "intangibles",
+        "accounts_payable", "total_liabilities", "debt_short_term",
+        "debt_long_term", "share_capital", "retained_earnings", "reserves",
+        # Nuevos: Flujo de Efectivo
+        "operating_cf", "capex_ppe", "capex_intangibles", "capex_total",
+        "investing_cf", "financing_cf", "debt_issued", "debt_repaid",
+        "dividends_paid", "interest_paid", "taxes_paid",
+        # Métricas derivadas
+        "gross_margin", "operating_margin", "net_margin", "net_debt",
+        "quick_ratio", "interest_coverage", "effective_tax_rate",
+        "payout_ratio", "capex_intensity",
+        # Cuentas crudas
+        "raw_accounts",
     }
     for period in result["periods"]:
-        assert expected_keys.issubset(period.keys())
+        missing = expected_keys - period.keys()
+        assert not missing, f"Faltan campos en período {period['fiscal_year']}: {missing}"
+
+
+# ---------------------------------------------------------------------------
+# Validación contra valores del PDF auditado de Alicorp 2023
+# Los 5 valores críticos que cruzamos contra el informe SMV publicado.
+# ---------------------------------------------------------------------------
+
+def test_alicorp_2023_cash_matches_audited_pdf():
+    """Efectivo y Equivalentes al 31-dic-2023 según PDF auditado: 1,493,778."""
+    p = fetch_estados_financieros(
+        "ALICORC1", desde=2023, hasta=2023, cache_dir=FIXTURES,
+    )["periods"][0]
+    assert p["cash"] == 1_493_778
+
+
+def test_alicorp_2023_gross_profit_matches_audited_pdf():
+    """Ganancia Bruta 2023 según PDF auditado: 2,419,162."""
+    p = fetch_estados_financieros(
+        "ALICORC1", desde=2023, hasta=2023, cache_dir=FIXTURES,
+    )["periods"][0]
+    assert p["gross_profit"] == 2_419_162
+
+
+def test_alicorp_2023_interest_expense_matches_audited_pdf():
+    """Gastos Financieros 2023 según PDF auditado: -509,525."""
+    p = fetch_estados_financieros(
+        "ALICORC1", desde=2023, hasta=2023, cache_dir=FIXTURES,
+    )["periods"][0]
+    assert p["interest_expense"] == -509_525
+
+
+def test_alicorp_2023_dividends_paid_matches_audited_pdf():
+    """Dividendos Pagados 2023 según PDF auditado: 214,021 (positivo, salida)."""
+    p = fetch_estados_financieros(
+        "ALICORC1", desde=2023, hasta=2023, cache_dir=FIXTURES,
+    )["periods"][0]
+    assert p["dividends_paid"] == 214_021
+
+
+def test_alicorp_2023_total_liabilities_matches_audited_pdf():
+    """Total Pasivos al 31-dic-2023 según PDF auditado: 10,049,162."""
+    p = fetch_estados_financieros(
+        "ALICORC1", desde=2023, hasta=2023, cache_dir=FIXTURES,
+    )["periods"][0]
+    assert p["total_liabilities"] == 10_049_162
+
+
+# ---------------------------------------------------------------------------
+# Sanity checks de métricas derivadas
+# ---------------------------------------------------------------------------
+
+def test_alicorp_2023_derived_metrics_make_sense():
+    p = fetch_estados_financieros(
+        "ALICORC1", desde=2023, hasta=2023, cache_dir=FIXTURES,
+    )["periods"][0]
+
+    # gross_margin = gross_profit / revenue ≈ 2.42M / 13.66M ≈ 17.7%
+    assert 0.15 < p["gross_margin"] < 0.20
+
+    # net_debt = total_debt - cash, debe ser positivo (Alicorp tiene más deuda que caja)
+    assert p["net_debt"] > 0
+    assert p["net_debt"] == p["total_debt"] - p["cash"]
+
+    # current_ratio cercano a 1 (Alicorp opera con liquidez ajustada)
+    assert 1.0 < p["current_ratio"] < 1.5
+
+    # quick_ratio < current_ratio (excluye inventarios)
+    assert p["quick_ratio"] < p["current_ratio"]
+
+    # ROE positivo, ROIC < ROE (porque ROIC divide por equity + deuda)
+    assert p["roe"] > 0
+    assert p["roic"] < p["roe"]
+
+
+def test_capex_total_is_sum_of_ppe_and_intangibles_absolute():
+    p = fetch_estados_financieros(
+        "ALICORC1", desde=2023, hasta=2023, cache_dir=FIXTURES,
+    )["periods"][0]
+    expected = abs(p["capex_ppe"]) + abs(p["capex_intangibles"])
+    assert p["capex_total"] == expected
+
+
+def test_fcf_subtracts_total_capex():
+    """FCF = OCF + capex_ppe + capex_intangibles (capex viene negativo)."""
+    p = fetch_estados_financieros(
+        "ALICORC1", desde=2023, hasta=2023, cache_dir=FIXTURES,
+    )["periods"][0]
+    expected = p["operating_cf"] + p["capex_ppe"] + p["capex_intangibles"]
+    assert p["fcf"] == expected
 
 
 def test_anual_alicorp_2023_has_realistic_magnitudes():
