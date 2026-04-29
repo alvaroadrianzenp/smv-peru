@@ -77,6 +77,7 @@ Cada período del output expone una key `"schema"` (`"2D"` o `"2F"`) para que se
 | `NEXAPEC1` | Nexa Resources Perú (ex Milpo) | minería de zinc |
 | `ORYGENC1` | Orygen Perú (ex Enel Generación) | electricidad / generación |
 | `PLUZC1` | Pluz Energía Perú (ex Enel Distribución) | electricidad / distribución |
+| `PORTINC1` | Inversiones Portuarias Chancay | logística / puertos |
 | `RELAPAC1` | Refinería La Pampilla | refinación de petróleo |
 | `SCCO` | Southern Peru Copper Corporation (Sucursal) | minería de cobre |
 | `UNACEMC1` | UNACEM | cementos |

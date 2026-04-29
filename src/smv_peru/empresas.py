@@ -51,6 +51,8 @@ EMPRESAS: dict[str, dict[str, str]] = {
                  "nombre": "Orygen Perú (ex Enel Generación)"},
     "PLUZC1":   {"rpj": "B40010", "ruc": "20269985900", "esquema": "2D",
                  "nombre": "Pluz Energía Perú (ex Enel Distribución)"},
+    "PORTINC1": {"rpj": "L02127", "ruc": "20611678500", "esquema": "2D",
+                 "nombre": "Inversiones Portuarias Chancay"},
     "RELAPAC1": {"rpj": "002766", "ruc": "20259829594", "esquema": "2D",
                  "nombre": "Refinería La Pampilla"},
     "SCCO":     {"rpj": "B20027", "ruc": "20100147514", "esquema": "2D",
