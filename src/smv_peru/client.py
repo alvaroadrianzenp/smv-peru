@@ -57,6 +57,7 @@ import re
 import sys
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from html import unescape
 from pathlib import Path
 
@@ -1014,4 +1015,43 @@ def fetch_estados_financieros(
         logger.warning(f"SMV: ningún período obtenido para ticker={ticker} (ni C ni I)")
         return None
 
-    return {"periods": periods_data, "info": {}}
+    # Construir info dict con metadata útil para el consumidor
+    periods_returned = [(p["fiscal_year"], p["quarter"]) for p in periods_data]
+    all_requested = []
+    for y in range(desde, hasta + 1):
+        if periodicidad == "anual":
+            all_requested.append((y, None))
+        else:
+            for q in range(1, 5):
+                all_requested.append((y, q))
+    returned_set = set(periods_returned)
+    periods_missing = [pr for pr in all_requested if pr not in returned_set]
+
+    if periods_missing:
+        # Formato del aviso: año-Q o solo año, máximo 5 explicitados
+        def _label(p):
+            y, q = p
+            return f"{y}" if q is None else f"{y}Q{q}"
+        muestra = [_label(p) for p in periods_missing[:5]]
+        extra = "" if len(periods_missing) <= 5 else f" ... y {len(periods_missing) - 5} más"
+        logger.warning(
+            f"smv-peru: {len(periods_missing)} de {len(all_requested)} períodos "
+            f"solicitados no tienen datos en SMV para {ticker}: "
+            f"[{', '.join(muestra)}{extra}]"
+        )
+
+    return {
+        "periods": periods_data,
+        "info": {
+            "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "ticker": ticker,
+            "schema": esquema,
+            "tipo": tipo,
+            "periodicidad": periodicidad,
+            "desde": desde,
+            "hasta": hasta,
+            "periods_requested": all_requested,
+            "periods_returned": periods_returned,
+            "periods_missing": periods_missing,
+        },
+    }

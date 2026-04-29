@@ -319,6 +319,50 @@ def test_serial_and_parallel_produce_identical_results_anual():
             assert ps[k] == pp[k], f"Diferencia en campo {k!r}: serial={ps[k]} parallel={pp[k]}"
 
 
+# ---------------------------------------------------------------------------
+# info dict: metadata de la consulta
+# ---------------------------------------------------------------------------
+
+def test_info_contains_metadata_keys():
+    r = fetch_estados_financieros(
+        "ALICORC1", desde=2021, hasta=2023, cache_dir=FIXTURES,
+    )
+    info = r["info"]
+    expected = {"fetched_at", "ticker", "schema", "tipo", "periodicidad",
+                "desde", "hasta", "periods_requested", "periods_returned",
+                "periods_missing"}
+    assert expected.issubset(info.keys())
+    assert info["ticker"] == "ALICORC1"
+    assert info["schema"] == "2D"
+    assert info["periodicidad"] == "anual"
+    assert info["desde"] == 2021
+    assert info["hasta"] == 2023
+
+
+def test_info_periods_returned_matches_periods():
+    r = fetch_estados_financieros(
+        "ALICORC1", desde=2021, hasta=2023, cache_dir=FIXTURES,
+    )
+    actual_periods = [(p["fiscal_year"], p["quarter"]) for p in r["periods"]]
+    assert r["info"]["periods_returned"] == actual_periods
+
+
+def test_info_periods_missing_empty_when_all_data_available():
+    r = fetch_estados_financieros(
+        "ALICORC1", desde=2023, hasta=2023, cache_dir=FIXTURES,
+    )
+    assert r["info"]["periods_missing"] == []
+
+
+def test_info_trimestral_lists_all_4_quarters():
+    r = fetch_estados_financieros(
+        "ALICORC1", desde=2023, hasta=2023, periodicidad="trimestral",
+        cache_dir=FIXTURES,
+    )
+    requested = r["info"]["periods_requested"]
+    assert requested == [(2023, 1), (2023, 2), (2023, 3), (2023, 4)]
+
+
 def test_serial_and_parallel_produce_identical_results_trimestral():
     """Idem pero con datos trimestrales (incluye normalización period-only,
     que requiere coordinación entre llamadas paralelas y la fase de procesamiento)."""

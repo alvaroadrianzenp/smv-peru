@@ -6,6 +6,8 @@ Librería Python para acceder a los datos financieros públicos publicados por l
 
 En desarrollo inicial. Aún no publicado en PyPI.
 
+**Cobertura histórica:** SMV publica EEFF desde **1999** para empresas como Alicorp (verificado empíricamente). Esto da ~27 años de historia comparable. Empresas más nuevas (PORTINC1 = Chancay 2024) tienen cobertura desde su listado.
+
 ## Instalación
 
 ```bash
@@ -135,7 +137,26 @@ Por otro lado, hay empresas que cotizan en BVL pero **no publican EEFF en el end
 
 ## Formato del output
 
-El dict devuelto tiene dos keys: `periods` (lista de dicts, uno por período) e `info` (reservado para metadata futura). Si la API no encuentra datos (ni en consolidado ni individual), retorna `None`.
+El dict devuelto tiene dos keys: `periods` (lista de dicts, uno por período) e `info` (metadata de la consulta). Si la API no encuentra datos (ni en consolidado ni individual), retorna `None`.
+
+### `info`: metadata de la consulta
+
+```python
+result["info"] == {
+    "fetched_at": "2026-04-29T15:30:00+00:00",   # timestamp UTC ISO de la descarga
+    "ticker": "ALICORC1",
+    "schema": "2D",
+    "tipo": "consolidado",                        # "consolidado" o "individual" (post-cascada)
+    "periodicidad": "anual",
+    "desde": 2021,
+    "hasta": 2023,
+    "periods_requested": [(2021, None), (2022, None), (2023, None)],
+    "periods_returned":  [(2021, None), (2022, None), (2023, None)],
+    "periods_missing":   [],                       # períodos solicitados pero sin datos en SMV
+}
+```
+
+Si pides `desde=2024, hasta=2026 trimestral` y SMV solo tiene Q1 2026 publicado al momento, `periods_missing` listará `[(2026, 2), (2026, 3), (2026, 4)]` y se emite un WARNING. Útil para detectar gaps de data sin tener que comparar manualmente.
 
 **Convenciones de unidades:**
 - Montos en **miles** de la moneda reportada por la empresa (típicamente soles). Ej. `revenue = 13_655_764` ≈ S/. 13.66 mil millones.
