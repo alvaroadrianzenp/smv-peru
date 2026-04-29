@@ -297,7 +297,9 @@ SMV publica D&A (Depreciación, Amortización y Agotamiento) **solo cuando la em
 | `net_debt_to_ebitda` | `net_debt / ebitda`. Apalancamiento neto. |
 | `interest_coverage_ebitda` | `ebitda / abs(interest_expense)`. Cobertura de intereses con EBITDA. |
 
-Para empresas con método directo (sin D&A en SMV), el analista puede proveer D&A manualmente desde **notas a los EEFF auditados** (memoria anual, reportes trimestrales) usando ``set_dna()`` y la librería recalcula EBITDA y todas las métricas dependientes:
+Para empresas con método directo (sin D&A en SMV), el analista puede proveer D&A manualmente desde **notas a los EEFF auditados** (memoria anual, reportes trimestrales) usando ``set_dna()`` y la librería recalcula EBITDA y todas las métricas dependientes.
+
+> **Nota sobre estimación automática:** evaluamos estimar D&A automáticamente vía la identidad contable `D&A ≈ PPE_inicio + Capex − PPE_cierre`. La aproximación da error <10% en industriales (consumo, cementos, energía) pero **falla feo en mineras** (errores hasta ±140% por activos de exploración, desarrollo de minas, costos de remoción que no quedan en la cuenta PP&E estándar). Como las mineras son ~30% del catálogo y el análisis crediticio es donde más importa la precisión, **decidimos no implementar la estimación automática**. La solución correcta para D&A precisa de toda empresa es parsear las notas a los EEFF auditados (donde está siempre explícita) — eso queda como roadmap para v0.2+.
 
 ```python
 from smv_peru import fetch_estados_financieros, set_dna
