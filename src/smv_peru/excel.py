@@ -85,8 +85,6 @@ SECTIONS_2D: list[tuple[str, list[tuple[str, str, str]]]] = [
         ("current_liab", "Current liabilities (subtotal)", "money"),
         ("debt_long_term", "Long-term debt", "money"),
         ("noncurrent_liab", "Non-current liabilities (subtotal)", "money"),
-        ("total_debt", "Total debt", "money"),
-        ("net_debt", "Net debt", "money"),
         ("total_liabilities", "Total liabilities", "money"),
         ("share_capital", "Share capital", "money"),
         ("investment_shares", "Investment shares (Perú-specific)", "money"),
@@ -122,6 +120,8 @@ SECTIONS_2D: list[tuple[str, list[tuple[str, str, str]]]] = [
     ("EBITDA Y MÉTRICAS DE CRÉDITO", [
         ("ebitda", "EBITDA", "money"),
         ("ebitda_margin", "EBITDA margin", "pct"),
+        ("total_debt", "Total debt", "money"),
+        ("net_debt", "Net debt", "money"),
         ("debt_to_ebitda", "Debt / EBITDA", "ratio"),
         ("net_debt_to_ebitda", "Net debt / EBITDA", "ratio"),
         ("interest_coverage_ebitda", "EBITDA / Interest expense", "ratio"),
