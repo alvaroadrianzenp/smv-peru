@@ -308,10 +308,13 @@ Los **derivados** (márgenes, ratios, NIM, NPL, etc.) no están en estos dicts p
 Este proyecto usa [uv](https://github.com/astral-sh/uv) como gestor de entornos y dependencias.
 
 ```bash
-uv sync                # crea el venv e instala el paquete editable
-uv run pytest          # corre los tests
-uv run python          # entra a un REPL con el paquete disponible
+uv sync                          # crea el venv e instala el paquete editable
+uv run pytest                    # corre los tests
+uv run python                    # entra a un REPL con el paquete disponible
+uv run python examples/demo.py   # corre el demo (descarga datos reales)
 ```
+
+El [demo](examples/demo.py) muestra los principales casos de uso: descarga anual y trimestral, esquemas 2D y 2F, métricas derivadas, `raw_accounts`, YoY growth y auditoría del mapeo amigable → código SMV.
 
 ## Roadmap
 

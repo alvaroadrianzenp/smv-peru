@@ -198,6 +198,11 @@ FIELDS_TO_CODES_2F: dict[str, str] = {
     "interest_income":     "2F0101",  # Ingresos por intereses
     "interest_expense":    "2F0301",  # Gastos por intereses (negativo)
     "net_interest_income": "2F2301",  # MARGEN BRUTO (NII)
+    # Nota: para algunos bancos/holdings (BAP, IFS, Scotiabank) el "MARGEN
+    # BRUTO" oficial puede incluir ajustes contables propios y diferir de la
+    # simple resta `interest_income + interest_expense`. El valor expuesto es
+    # fiel al publicado por SMV. Para una versión "calculada", recompútalo:
+    #   nii_calc = period["interest_income"] + period["interest_expense"]
     "loan_loss_provisions": "2F2304",  # Provisión para créditos (negativo)
     "fee_income_net":      "2F2406",  # Comisiones (netas)
     "trading_income":      "2F2506",  # Resultado por operaciones financieras (ROF)
