@@ -44,17 +44,16 @@ SECTIONS_2D: list[tuple[str, list[tuple[str, str, str]]]] = [
         ("cogs", "Cost of goods sold", "money"),
         ("gross_profit", "Gross profit", "money"),
         ("gross_margin", "Gross margin", "pct"),
-        ("admin_expenses", "Admin expenses", "money"),
         ("selling_expenses", "Selling expenses", "money"),
+        ("admin_expenses", "Admin expenses", "money"),
         ("other_op_income", "Other operating income", "money"),
         ("other_op_expenses", "Other operating expenses", "money"),
-        ("operating_income", "Operating income", "money"),
+        ("operating_income", "Operating income (EBIT)", "money"),
         ("operating_margin", "Operating margin", "pct"),
         ("ebitda", "EBITDA (real, requires D&A)", "money"),
         ("interest_income", "Interest income", "money"),
         ("interest_expense", "Interest expense", "money"),
         ("fx_gain_loss", "FX gain/loss (net)", "money"),
-        ("interest_coverage", "Interest coverage (EBIT)", "ratio"),
         ("pretax_income", "Pretax income", "money"),
         ("income_tax", "Income tax", "money"),
         ("effective_tax_rate", "Effective tax rate", "pct"),
@@ -86,37 +85,37 @@ SECTIONS_2D: list[tuple[str, list[tuple[str, str, str]]]] = [
         ("current_liab", "Current liabilities (subtotal)", "money"),
         ("debt_long_term", "Long-term debt", "money"),
         ("noncurrent_liab", "Non-current liabilities (subtotal)", "money"),
-        ("total_liabilities", "Total liabilities", "money"),
         ("total_debt", "Total debt", "money"),
         ("net_debt", "Net debt", "money"),
+        ("total_liabilities", "Total liabilities", "money"),
         ("share_capital", "Share capital", "money"),
         ("investment_shares", "Investment shares (Perú-specific)", "money"),
-        ("retained_earnings", "Retained earnings", "money"),
         ("reserves", "Reserves", "money"),
-        ("equity", "Total equity", "money"),
+        ("retained_earnings", "Retained earnings", "money"),
         ("equity_to_parent", "  Attributable to parent", "money"),
         ("minority_equity", "  Minority interest", "money"),
+        ("equity", "Total equity", "money"),
     ]),
     ("CASH FLOW", [
+        ("dna", "D&A (only for indirect-CF firms)", "money"),
         ("cash_from_customers", "Cash from customers", "money"),
         ("interest_received_op", "Interest received (op)", "money"),
         ("cash_to_suppliers", "Cash to suppliers", "money"),
         ("cash_to_employees", "Cash to employees", "money"),
         ("interest_paid", "Interest paid (total)", "money"),
         ("taxes_paid", "Taxes paid", "money"),
-        ("operating_cf", "Operating cash flow", "money"),
-        ("dna", "D&A (only for indirect-CF firms)", "money"),
+        ("operating_cf", "Operating cash flow (subtotal)", "money"),
         ("ppe_proceeds", "PP&E proceeds", "money"),
         ("capex_ppe", "Capex PP&E", "money"),
         ("capex_intangibles", "Capex intangibles", "money"),
         ("capex_total", "Capex total (absolute)", "money"),
         ("dividends_received", "Dividends received (inv)", "money"),
-        ("investing_cf", "Investing cash flow", "money"),
+        ("investing_cf", "Investing cash flow (subtotal)", "money"),
         ("debt_issued", "Debt issued", "money"),
         ("debt_repaid", "Debt repaid", "money"),
         ("equity_issued", "Equity issued", "money"),
         ("dividends_paid", "Dividends paid (absolute)", "money"),
-        ("financing_cf", "Financing cash flow", "money"),
+        ("financing_cf", "Financing cash flow (subtotal)", "money"),
         ("fcf", "Free cash flow", "money"),
         ("end_cash", "End-of-period cash", "money"),
     ]),
@@ -130,9 +129,9 @@ SECTIONS_2D: list[tuple[str, list[tuple[str, str, str]]]] = [
     ("RATIOS Y MÉTRICAS DERIVADAS", [
         ("current_ratio", "Current ratio", "ratio"),
         ("quick_ratio", "Quick ratio", "ratio"),
-        ("interest_coverage", "EBIT / Interest expense (TIE)", "ratio"),
+        ("interest_coverage", "Interest coverage (EBIT/int.expense)", "ratio"),
+        ("capex_intensity", "Capex intensity (capex/revenue)", "pct"),
         ("payout_ratio", "Payout ratio", "pct"),
-        ("capex_intensity", "Capex intensity", "pct"),
         ("roe", "ROE (avg equity)", "pct"),
         ("roic", "ROIC (avg invested capital)", "pct"),
     ]),
@@ -263,15 +262,13 @@ def _populate_eeff_sheet(ws, periods: list[dict], ticker: str | None) -> None:
     titulo = nombre_emp + (f" ({ticker})" if ticker and nombre_emp != ticker else "")
     ws["A1"] = titulo or "Estados Financieros"
     ws["A1"].font = title_font
-    schema_label = {"2D": "2D — Industriales", "2F": "2F — Bancos"}.get(schema, schema)
-    ws["A2"] = f"Esquema: {schema_label}"
     currency = periods[0].get("currency") or "—"
     currency_full = {"PEN": "Soles peruanos (PEN)", "USD": "Dólares (USD)"}.get(currency, currency)
-    ws["A3"] = f"Moneda: {currency_full}"
-    ws["A4"] = f"Generado: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
-    ws["A5"] = "Montos en miles. Ratios como porcentajes."
+    ws["A2"] = f"Moneda: {currency_full}"
+    ws["A3"] = f"Generado: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+    ws["A4"] = "Montos en miles. Ratios como porcentajes."
 
-    HEADER_ROW = 7
+    HEADER_ROW = 6
     LABEL_COL = 1
     FIRST_DATA_COL = 2
 

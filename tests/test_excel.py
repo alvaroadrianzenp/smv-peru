@@ -53,14 +53,14 @@ def test_to_excel_2d_has_expected_structure(tmp_path):
     assert "Cuentas adicionales (raw)" not in wb.sheetnames  # off por default
 
     ws = wb["EEFF"]
-    # Header con metadata
+    # Header con metadata: A1=título, A2=moneda
     assert "ALICORC1" in str(ws["A1"].value)
-    assert "2D" in str(ws["A2"].value)
+    assert "Moneda" in str(ws["A2"].value)
 
     # Header de columnas en fila 6: períodos en orden
-    assert ws.cell(row=7, column=2).value == "2021"
-    assert ws.cell(row=7, column=3).value == "2022"
-    assert ws.cell(row=7, column=4).value == "2023"
+    assert ws.cell(row=6, column=2).value == "2021"
+    assert ws.cell(row=6, column=3).value == "2022"
+    assert ws.cell(row=6, column=4).value == "2023"
 
 
 def test_to_excel_2d_contains_revenue_value(tmp_path):
@@ -72,7 +72,7 @@ def test_to_excel_2d_contains_revenue_value(tmp_path):
     ws = wb["EEFF"]
     # Buscar la fila de Revenue
     revenue_row = None
-    for row in ws.iter_rows(min_row=8, values_only=False):
+    for row in ws.iter_rows(min_row=7, values_only=False):
         if row[0].value and "Revenue" in str(row[0].value):
             revenue_row = row
             break
@@ -92,12 +92,12 @@ def test_to_excel_2f_uses_banking_sections(tmp_path):
     path = to_excel(datos, tmp_path / "bbva.xlsx", ticker="BBVAC1")
     wb = load_workbook(path)
     ws = wb["EEFF"]
-    # Schema metadata indica 2F
-    assert "2F" in str(ws["A2"].value)
+    # Header tiene moneda
+    assert "Moneda" in str(ws["A2"].value)
 
-    # Debe aparecer "RATIOS BANCARIOS" como sección
+    # Debe aparecer "RATIOS BANCARIOS" como sección (sólo 2F los tiene)
     found_banking = False
-    for row in ws.iter_rows(min_row=8, values_only=True):
+    for row in ws.iter_rows(min_row=7, values_only=True):
         if row[0] and "RATIOS BANCARIOS" in str(row[0]):
             found_banking = True
             break
@@ -112,7 +112,7 @@ def test_to_excel_2f_contains_loans_net(tmp_path):
     wb = load_workbook(path)
     ws = wb["EEFF"]
     found = None
-    for row in ws.iter_rows(min_row=8, values_only=False):
+    for row in ws.iter_rows(min_row=7, values_only=False):
         if row[0].value and "Loans, net (total)" in str(row[0].value):
             found = row
             break
@@ -156,5 +156,5 @@ def test_to_excel_trimestral_uses_compact_labels(tmp_path):
     wb = load_workbook(path)
     ws = wb["EEFF"]
     # Headers de columnas: 2023Q1, 2023Q2, 2023Q3, 2023Q4
-    assert ws.cell(row=7, column=2).value == "2023Q1"
-    assert ws.cell(row=7, column=5).value == "2023Q4"
+    assert ws.cell(row=6, column=2).value == "2023Q1"
+    assert ws.cell(row=6, column=5).value == "2023Q4"

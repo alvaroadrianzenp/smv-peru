@@ -52,8 +52,6 @@ def _write_single_csv(writer, periods: list[dict], ticker: str | None) -> None:
 
     # Header de metadata
     writer.writerow([titulo or "Estados Financieros"])
-    schema_label = {"2D": "2D — Industriales", "2F": "2F — Bancos"}.get(schema, schema)
-    writer.writerow([f"Esquema: {schema_label}"])
     currency = periods[0].get("currency") or "—"
     currency_full = {"PEN": "Soles peruanos (PEN)", "USD": "Dólares (USD)"}.get(currency, currency)
     writer.writerow([f"Moneda: {currency_full}"])
