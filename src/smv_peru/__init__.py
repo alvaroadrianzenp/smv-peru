@@ -9,9 +9,11 @@ from .client import (
     fetch_estados_financieros,
 )
 from .empresas import EMPRESAS, UnknownTickerError, resolve_ticker
+from .excel import to_excel
 
 __all__ = [
     "fetch_estados_financieros",
+    "to_excel",
     "FIELDS_TO_CODES",
     "FIELDS_TO_CODES_2D",
     "FIELDS_TO_CODES_2F",

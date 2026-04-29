@@ -9,7 +9,8 @@ En desarrollo inicial. Aún no publicado en PyPI.
 ## Instalación
 
 ```bash
-pip install smv-peru
+pip install smv-peru                # instalación core (sin dependencias externas)
+pip install smv-peru[excel]         # opcional: agrega openpyxl para exportar a .xlsx
 ```
 
 > Mientras no se publique en PyPI, puedes instalarla desde el repositorio local con `pip install -e .` o `uv sync`.
@@ -50,6 +51,19 @@ diferencias_de_cambio = ultimo["raw_accounts"].get("2D0410")
 if diferencias_de_cambio:
     print(diferencias_de_cambio["nombre"], diferencias_de_cambio["monto"])
 ```
+
+### Exportar a Excel (plantilla histórica para modelos financieros)
+
+Con la extensión `[excel]` instalada (`pip install smv-peru[excel]`), genera un archivo `.xlsx` con los EEFF listos para tu modelo:
+
+```python
+from smv_peru import fetch_estados_financieros, to_excel
+
+datos = fetch_estados_financieros("ALICORC1", desde=2019, hasta=2024)
+to_excel(datos, "alicorp_2019_2024.xlsx", ticker="ALICORC1")
+```
+
+Layout: filas = campos amigables agrupados por sección (Estado de Resultados, Balance, Cash Flow, Ratios, YoY); columnas = períodos cronológicos (`2019, 2020, ...` o `2023Q1, 2023Q2, ...` para trimestral). Header con metadata (ticker, esquema, fecha). Soporta industriales (2D) y bancos (2F) automáticamente. Con `include_raw=True` agrega una segunda hoja con las cuentas adicionales que SMV publica.
 
 ## Tickers soportados
 
