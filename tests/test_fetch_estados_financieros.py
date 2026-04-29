@@ -116,6 +116,47 @@ def test_alicorp_2023_total_liabilities_matches_audited_pdf():
 # Sanity checks de métricas derivadas
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Cuentas adicionales agregadas en versión Tier B (Opción B)
+# ---------------------------------------------------------------------------
+
+def test_alicorp_2023_has_goodwill_and_attributable_fields():
+    """Goodwill, equity_to_parent, minority_equity, fx_gain_loss y EPS diluida
+    deben estar presentes para Alicorp 2023."""
+    p = fetch_estados_financieros(
+        "ALICORC1", desde=2023, hasta=2023, cache_dir=FIXTURES,
+    )["periods"][0]
+    # Tier A
+    assert p.get("goodwill") is not None
+    assert p.get("net_income_to_parent") is not None
+    assert p.get("minority_interest") is not None
+    assert p.get("eps_diluted") is not None
+    # Tier B
+    assert p.get("fx_gain_loss") is not None
+    assert p.get("employee_benefits") is not None
+    assert p.get("equity_to_parent") is not None
+
+
+def test_alicorp_2023_minority_equity_is_derived_correctly():
+    """minority_equity = equity total − equity_to_parent."""
+    p = fetch_estados_financieros(
+        "ALICORC1", desde=2023, hasta=2023, cache_dir=FIXTURES,
+    )["periods"][0]
+    expected = p["equity"] - p["equity_to_parent"]
+    assert p["minority_equity"] == expected
+
+
+def test_alicorp_2023_net_income_decomposition_cuadra():
+    """net_income = net_income_to_parent + minority_interest (con tolerancia)."""
+    p = fetch_estados_financieros(
+        "ALICORC1", desde=2023, hasta=2023, cache_dir=FIXTURES,
+    )["periods"][0]
+    if p["net_income_to_parent"] is not None and p["minority_interest"] is not None:
+        suma = p["net_income_to_parent"] + p["minority_interest"]
+        # Pueden diferir por unos pocos miles por redondeo
+        assert abs(suma - p["net_income"]) < 100
+
+
 def test_alicorp_2023_derived_metrics_make_sense():
     p = fetch_estados_financieros(
         "ALICORC1", desde=2023, hasta=2023, cache_dir=FIXTURES,

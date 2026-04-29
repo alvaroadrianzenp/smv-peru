@@ -117,22 +117,31 @@ FIELDS_TO_CODES_2D: dict[str, str] = {
     "operating_income":  "2D03ST",  # Ganancia (Pérdida) Operativa
     "interest_income":   "2D0401",  # Ingresos Financieros
     "interest_expense":  "2D0402",  # Gastos Financieros
+    "fx_gain_loss":      "2D0410",  # Diferencias de Cambio Neto (clave en Perú: empresas con deuda USD)
     "pretax_income":     "2D04ST",  # Ganancia (Pérdida) antes de Impuestos
     "income_tax":        "2D0502",  # Ingreso (Gasto) por Impuesto
     "net_income":        "2D07ST",  # Ganancia (Pérdida) Neta del Ejercicio
+    "net_income_to_parent":   "2D0802",  # Ganancia atribuible a propietarios de la controladora
+    "minority_interest":      "2D0803",  # Ganancia atribuible a participaciones no controladoras
     "eps":               "2D0911",  # Total Ganancias (Pérdida) Básica por Acción Ordinaria
+    "eps_diluted":       "2D0915",  # Total Ganancias (Pérdida) Diluida por Acción Ordinaria
 
     # Estado de Situación Financiera (Balance)
     "cash":                "1D0109",  # Efectivo y Equivalentes al Efectivo
     "accounts_receivable": "1D0103",  # Cuentas por Cobrar Comerciales
     "inventory":           "1D0106",  # Inventarios
+    "biological_assets":   "1D0112",  # Activos Biológicos (clave para agro: Casa Grande, Backus)
     "current_assets":      "1D01ST",  # Total Activos Corrientes
     "ppe":                 "1D0205",  # Propiedades, Planta y Equipo
     "intangibles":         "1D0206",  # Activos Intangibles Distintos de la Plusvalía
+    "investment_property": "1D0211",  # Propiedades de Inversión
+    "goodwill":            "1D0212",  # Plusvalía (Goodwill)
+    "equity_investments":  "1D0214",  # Inversiones contabilizadas por método de la participación
     "noncurrent_assets":   "1D02ST",  # Total Activos No Corrientes
     "total_assets_smv":    "1D020T",  # TOTAL DE ACTIVOS (chequeo de integridad)
     "accounts_payable":    "1D0302",  # Cuentas por Pagar Comerciales
     "debt_short_term":     "1D0309",  # Otros Pasivos Financieros (corriente)
+    "employee_benefits":   "1D0313",  # Provisión por Beneficios a los Empleados
     "current_liab":        "1D03ST",  # Total Pasivos Corrientes
     "debt_long_term":      "1D0401",  # Otros Pasivos Financieros (no corriente)
     "noncurrent_liab":     "1D04ST",  # Total Pasivos No Corrientes
@@ -140,10 +149,13 @@ FIELDS_TO_CODES_2D: dict[str, str] = {
     "share_capital":       "1D0701",  # Capital Emitido
     "retained_earnings":   "1D0707",  # Resultados Acumulados
     "reserves":            "1D0708",  # Otras Reservas de Patrimonio
+    "investment_shares":   "1D0703",  # Acciones de Inversión (especifico Perú)
+    "equity_to_parent":    "1D0710",  # Patrimonio Atribuible a Propietarios de la Controladora
     "equity":              "1D07ST",  # Total Patrimonio
 
     # Estado de Flujos de Efectivo (método directo)
     "cash_from_customers": "3D0101",
+    "interest_received_op": "3D0103",  # Intereses recibidos clasificados en operación
     "cash_to_suppliers":   "3D0109",
     "cash_to_employees":   "3D0105",
     "interest_paid_op":    "3D0107",
@@ -152,10 +164,12 @@ FIELDS_TO_CODES_2D: dict[str, str] = {
     "ppe_proceeds":        "3D0202",
     "capex_ppe":           "3D0206",
     "capex_intangibles":   "3D0207",
+    "dividends_received":  "3D0211",  # Dividendos recibidos (actividad inversión)
     "investing_cf":        "3D02ST",
     "dividends_paid_fin":  "3D0305",
     "interest_paid_fin":   "3D0311",
     "debt_issued":         "3D0325",
+    "equity_issued":       "3D0327",  # Emisión de Acciones (aumento de capital)
     "debt_repaid":         "3D0330",
     "financing_cf":        "3D03ST",
     "end_cash":            "3D04ST",
@@ -193,6 +207,7 @@ FIELDS_TO_CODES_2F: dict[str, str] = {
     "loans_lt":                    "1F1902",  # Cartera de créditos neto (no corriente)
     "ppe":                         "1F1701",  # Inmuebles, mobiliario y equipo
     "intangibles":                 "1F1907",  # Activo intangible
+    "repossessed_assets":          "1F1001",  # Bienes realizables, recibidos en pago, adjudicados
     "noncurrent_assets":           "1F19ST",  # Total Activo No Corriente
     "total_assets":                "1F2001",  # TOTAL ACTIVO
     "deposits":                    "1F2101",  # Obligaciones con el público
@@ -499,23 +514,39 @@ def _map_period_2d(rpj: str, pnl, bal, flow, fiscal_year: int,
     period["revenue"] = revenue
     for f in ("cogs", "gross_profit", "admin_expenses", "selling_expenses",
               "other_op_income", "other_op_expenses", "operating_income",
-              "interest_income", "interest_expense", "pretax_income",
-              "income_tax", "net_income", "eps"):
+              "interest_income", "interest_expense", "fx_gain_loss",
+              "pretax_income", "income_tax", "net_income",
+              "net_income_to_parent", "minority_interest",
+              "eps", "eps_diluted"):
         period[f] = amt(f, pnl_e)
 
-    for f in ("cash", "accounts_receivable", "inventory", "current_assets",
-              "ppe", "intangibles", "noncurrent_assets", "total_assets_smv",
-              "accounts_payable", "debt_short_term", "current_liab",
+    for f in ("cash", "accounts_receivable", "inventory", "biological_assets",
+              "current_assets",
+              "ppe", "intangibles", "investment_property", "goodwill",
+              "equity_investments", "noncurrent_assets", "total_assets_smv",
+              "accounts_payable", "debt_short_term", "employee_benefits",
+              "current_liab",
               "debt_long_term", "noncurrent_liab", "total_liabilities",
-              "share_capital", "retained_earnings", "reserves"):
+              "share_capital", "retained_earnings", "reserves",
+              "investment_shares", "equity_to_parent"):
         period[f] = amt(f, bal_e)
     period["equity"] = equity
+    # Derivado: patrimonio atribuible a no controladoras = equity total -
+    # equity de la controladora. SMV no expone una cuenta separada para esto;
+    # se calcula como diferencia.
+    if period["equity_to_parent"] is not None:
+        period["minority_equity"] = equity - period["equity_to_parent"]
+    else:
+        period["minority_equity"] = None
 
-    for f in ("cash_from_customers", "cash_to_suppliers", "cash_to_employees",
+    for f in ("cash_from_customers", "interest_received_op",
+              "cash_to_suppliers", "cash_to_employees",
               "interest_paid_op", "taxes_paid_op", "operating_cf",
-              "ppe_proceeds", "capex_ppe", "capex_intangibles", "investing_cf",
+              "ppe_proceeds", "capex_ppe", "capex_intangibles",
+              "dividends_received", "investing_cf",
               "dividends_paid_fin", "interest_paid_fin", "debt_issued",
-              "debt_repaid", "financing_cf", "end_cash", "dna"):
+              "equity_issued", "debt_repaid", "financing_cf",
+              "end_cash", "dna"):
         period[f] = amt(f, flow_e)
 
     # --- Stocks del período anterior (Monto2) para promedios y YoY ---------
@@ -688,7 +719,8 @@ def _map_period_2f(rpj: str, pnl, bal, flow, fiscal_year: int,
     for f in ("cash", "interbank_funds", "investments_fvtpl", "investments_afs",
               "investments_htm", "loans_st", "performing_loans", "refinanced_loans",
               "overdue_loans", "judicial_loans", "current_assets", "loans_lt",
-              "ppe", "intangibles", "noncurrent_assets", "total_assets",
+              "ppe", "intangibles", "repossessed_assets",
+              "noncurrent_assets", "total_assets",
               "deposits", "interbank_funds_payable", "deposits_financial_system",
               "financial_debt_st", "current_liab", "financial_debt_lt",
               "noncurrent_liab", "total_liabilities", "share_capital", "reserves",

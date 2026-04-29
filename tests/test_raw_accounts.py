@@ -113,13 +113,13 @@ def test_raw_accounts_entries_have_correct_structure():
 
 
 def test_raw_accounts_includes_known_extra_account():
-    """Diferencias de Cambio Neto (2D0410) NO está en amigables → debe estar en raw."""
+    """1D0114 (Otros Activos Financieros) NO está en amigables → debe estar en raw."""
     result = fetch_estados_financieros(
         "ALICORC1", desde=2023, hasta=2023, cache_dir=FIXTURES,
     )
     p = result["periods"][0]
-    assert "2D0410" in p["raw_accounts"]
-    assert "Diferencias de Cambio" in p["raw_accounts"]["2D0410"]["nombre"]
+    assert "1D0114" in p["raw_accounts"]
+    assert "Otros Activos" in p["raw_accounts"]["1D0114"]["nombre"]
 
 
 def test_fields_to_codes_is_complete_and_unique():

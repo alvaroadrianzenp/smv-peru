@@ -153,6 +153,13 @@ def test_bbva_2024_loan_to_deposit_makes_sense(bbva_2024):
 # raw_accounts en 2F
 # ---------------------------------------------------------------------------
 
+def test_bbva_2024_has_repossessed_assets(bbva_2024):
+    """1F1001 (Bienes realizables, recibidos en pago) ahora es campo amigable."""
+    assert bbva_2024.get("repossessed_assets") is not None
+    # BBVA tiene cierta cantidad de bienes adjudicados (no cero típicamente)
+    assert bbva_2024["repossessed_assets"] >= 0
+
+
 def test_bbva_raw_accounts_excludes_friendly_codes(bbva_2024):
     """raw_accounts no debe tener codigos cubiertos por campos amigables 2F."""
     intersection = set(bbva_2024["raw_accounts"].keys()) & CODIGOS_USADOS_2F
