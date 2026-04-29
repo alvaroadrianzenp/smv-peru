@@ -55,8 +55,6 @@ EMPRESAS: dict[str, dict[str, str]] = {
                  "nombre": "Inversiones Portuarias Chancay"},
     "RELAPAC1": {"rpj": "002766", "ruc": "20259829594", "esquema": "2D",
                  "nombre": "Refinería La Pampilla"},
-    "SCCO":     {"rpj": "B20027", "ruc": "20100147514", "esquema": "2D",
-                 "nombre": "Southern Peru Copper Corporation (Sucursal)"},
     "UNACEMC1": {"rpj": "B30121", "ruc": "20100137390", "esquema": "2D",
                  "nombre": "UNACEM"},
     "VOLCABC1": {"rpj": "CM0001", "ruc": "20383045267", "esquema": "2D",

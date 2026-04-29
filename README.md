@@ -153,7 +153,6 @@ Cada período del output expone una key `"schema"` (`"2D"` o `"2F"`) para que se
 | `PLUZC1` | Pluz Energía Perú (ex Enel Distribución) | electricidad / distribución |
 | `PORTINC1` | Inversiones Portuarias Chancay | logística / puertos |
 | `RELAPAC1` | Refinería La Pampilla | refinación de petróleo |
-| `SCCO` | Southern Peru Copper Corporation (Sucursal) | minería de cobre |
 | `UNACEMC1` | UNACEM | cementos |
 | `VOLCABC1` | Volcan Compañía Minera | minería polimetálica |
 | `YURAC1` | Yura | cementos |
@@ -179,7 +178,10 @@ Estas empresas son muy líquidas en BVL pero usan **otros esquemas contables** q
 
 Cuando se añada soporte para 2E, estos tickers entrarán al catálogo.
 
-Por otro lado, hay empresas que cotizan en BVL pero **no publican EEFF en el endpoint SMV usado por esta librería** (ya sea porque su matriz consolidante reporta en otro país o por régimen especial). En esos casos `fetch_eeff` retornaría `None`. Ejemplos detectados: Telefónica del Perú (deslistada de trading activo), Southern Copper (ADR sin EEFF en SMV).
+Por otro lado, hay empresas que cotizan en BVL pero **no publican EEFF en el endpoint SMV usado por esta librería**. En esos casos `fetch_eeff` retornaría `None`. Ejemplos detectados:
+
+- **Southern Copper Corporation (ticker BVL: SCCO)**: matriz domiciliada en Delaware (EE.UU.), reporta a SEC americana, no a SMV peruana. Lo único en SMV es la sucursal peruana ("SOUTHERN PERU COPPER CORPORATION, SUCURSAL DEL PERU"), que **no es la entidad que cotiza**. Por eso no la incluimos en el catálogo — sería engañoso entregar datos de la sucursal cuando el usuario pide la matriz.
+- **Telefónica del Perú**: deslistada de trading activo en BVL.
 
 ## Formato del output
 
@@ -207,7 +209,7 @@ Si pides `desde=2024, hasta=2026 trimestral` y SMV solo tiene Q1 2026 publicado 
 **Convenciones de unidades:**
 - Montos en **miles** de la moneda reportada por la empresa. Cada período expone `period["currency"]` con código ISO (`"PEN"` soles, `"USD"` dólares). Ejemplos:
   - **Industriales y bancos** (Alicorp, BBVA, UNACEM, etc.): reportan en **PEN**.
-  - **Mineras** (Buenaventura, Cerro Verde, Volcan, Minsur, Southern Copper, Nexa): reportan en **USD** (sus ventas son commodities denominados en dólares).
+  - **Mineras** (Buenaventura, Cerro Verde, Volcan, Minsur, Nexa): reportan en **USD** (sus ventas son commodities denominados en dólares).
 - **Importante:** sumar o comparar revenue entre PEN y USD sin convertir es incorrecto. Verifica siempre `period["currency"]` antes de hacer comparativos sectoriales.
 - Ratios en **decimales**, NO porcentajes. Ej. `roe = 0.14` significa 14%.
 - Algunos signos siguen la convención SMV (gastos y salidas de caja vienen negativos): `cogs`, `interest_expense`, `income_tax`, `capex_ppe`, `capex_intangibles`, `debt_repaid`. Los campos derivados de "salidas" agregadas (`dividends_paid`, `interest_paid`, `taxes_paid`, `capex_total`) se exponen en valor absoluto positivo.

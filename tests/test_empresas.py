@@ -65,3 +65,24 @@ def test_resolve_some_new_tickers():
         info = resolve_ticker(ticker)
         assert info["rpj"], f"{ticker} sin rpj"
         assert info["nombre"], f"{ticker} sin nombre"
+
+
+def test_no_sucursal_or_branch_entities_in_catalog():
+    """Garantía de integridad: el catálogo no debe incluir sucursales (SCCO fue
+    el caso histórico — ticker BVL apuntaba a la matriz NYSE pero los datos
+    SMV eran de la sucursal peruana, engañoso)."""
+    for ticker, info in EMPRESAS.items():
+        nombre_up = info["nombre"].upper()
+        assert "SUCURSAL" not in nombre_up, (
+            f"Ticker {ticker} parece ser una sucursal ({info['nombre']!r}). "
+            f"Las sucursales son entidades operativas, no cotizan; usar "
+            f"sucursal cuando el ticker BVL es de la matriz puede engañar."
+        )
+
+
+def test_scco_is_no_longer_in_catalog():
+    """SCCO removido en versión post-Tier B: la matriz Southern Copper
+    Corporation no reporta a SMV (reporta a SEC americana). Lo único en SMV
+    es la sucursal peruana, que no es lo que cotiza el ticker BVL/NYSE.
+    Removerla evita engañar al usuario."""
+    assert "SCCO" not in EMPRESAS
