@@ -133,6 +133,17 @@ def test_bbva_2024_yoy_growth_metrics_present(bbva_2024):
         assert bbva_2024[field] is not None, f"YoY missing: {field}"
 
 
+def test_bbva_2024_nii_pure_equals_net_interest_income(bbva_2024):
+    """Para bancos puros como BBVA, nii_pure (interest_income + interest_expense)
+    debe coincidir exacto con net_interest_income (MARGEN BRUTO SMV). Para
+    holdings con seguros (BAP, IFS) o bancos con servicios mixtos (Scotiabank)
+    difieren — eso se valida en otros tests si fuera necesario.
+    """
+    assert bbva_2024["nii_pure"] is not None
+    assert bbva_2024["nii_pure"] == bbva_2024["interest_income"] + bbva_2024["interest_expense"]
+    assert abs(bbva_2024["nii_pure"] - bbva_2024["net_interest_income"]) < 1
+
+
 def test_bbva_2024_loan_to_deposit_makes_sense(bbva_2024):
     """Loan-to-deposit ratio: BBVA tipicamente 90-95%."""
     assert 0.85 < bbva_2024["loan_to_deposit_ratio"] < 1.05

@@ -213,7 +213,8 @@ SMV envía en cada respuesta `Monto1` (período actual) y `Monto2` (comparativo 
 |---|---|
 | `interest_income` | Ingresos por intereses. |
 | `interest_expense` | Gastos por intereses (negativo). |
-| `net_interest_income` | NII = ingresos − gastos por intereses (margen bruto). |
+| `net_interest_income` | "MARGEN BRUTO" oficial SMV: ingresos operacionales totales − costos operacionales totales. **Para holdings con seguros** (BAP, IFS) **incluye primas y siniestros**; **para Scotiabank** incluye otros ingresos/costos de operación. Para bancos puros (BBVA, BCP) coincide con `nii_pure`. |
+| `nii_pure` | Net Interest Income puro = `interest_income + interest_expense`. Margen financiero del negocio bancario core, comparable apples-to-apples entre bancos. Para holdings difiere de `net_interest_income`. |
 | `loan_loss_provisions` | Provisión para créditos (negativo). |
 | `fee_income_net` | Comisiones netas. |
 | `trading_income` | Resultado por operaciones financieras (ROF). |

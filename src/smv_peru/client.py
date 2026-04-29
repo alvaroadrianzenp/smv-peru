@@ -197,12 +197,17 @@ FIELDS_TO_CODES_2F: dict[str, str] = {
     # Estado de Resultados (2F)
     "interest_income":     "2F0101",  # Ingresos por intereses
     "interest_expense":    "2F0301",  # Gastos por intereses (negativo)
-    "net_interest_income": "2F2301",  # MARGEN BRUTO (NII)
-    # Nota: para algunos bancos/holdings (BAP, IFS, Scotiabank) el "MARGEN
-    # BRUTO" oficial puede incluir ajustes contables propios y diferir de la
-    # simple resta `interest_income + interest_expense`. El valor expuesto es
-    # fiel al publicado por SMV. Para una versión "calculada", recompútalo:
-    #   nii_calc = period["interest_income"] + period["interest_expense"]
+    "net_interest_income": "2F2301",  # MARGEN BRUTO (oficial SMV)
+    # IMPORTANTE: este campo es el "MARGEN BRUTO" oficial de SMV, NO el "Net
+    # Interest Income puro". El MARGEN BRUTO se calcula como:
+    #   2F01ST (INGRESOS OPERACIONALES) − |2F03ST (COSTOS OPERACIONALES)|
+    # En bancos puros (BBVA, BCP) coincide con interest_income + interest_expense
+    # porque solo tienen 2F0101 e 2F0301 como ingresos/costos operacionales.
+    # En holdings con seguros (BAP, IFS) incluye también primas (2F0102) y
+    # siniestros (2F0302). En Scotiabank incluye otros ingresos/costos de
+    # operación (2F0221, 2F0304) además de intereses.
+    # Para el "NII puro" (solo margen financiero del negocio bancario core),
+    # ver el campo derivado `nii_pure` que la librería expone.
     "loan_loss_provisions": "2F2304",  # Provisión para créditos (negativo)
     "fee_income_net":      "2F2406",  # Comisiones (netas)
     "trading_income":      "2F2506",  # Resultado por operaciones financieras (ROF)
@@ -654,6 +659,18 @@ def _map_period_2f(rpj: str, pnl, bal, flow, fiscal_year: int,
     period["gross_loans"] = gross_loans if gross_loans > 0 else None
 
     # --- Métricas derivadas ------------------------------------------------
+    # NII puro: margen financiero del negocio bancario core (solo intereses).
+    # Para BBVA/BCP coincide con `net_interest_income`. Para holdings (BAP,
+    # IFS) y bancos con servicios mixtos (Scotiabank) difiere porque el
+    # `net_interest_income` (= MARGEN BRUTO SMV) incluye además primas/
+    # siniestros u otros ingresos/costos operacionales.
+    ii_pure = period["interest_income"]
+    ie_pure = period["interest_expense"]
+    if ii_pure is not None and ie_pure is not None:
+        period["nii_pure"] = ii_pure + ie_pure
+    else:
+        period["nii_pure"] = None
+
     nii = period["net_interest_income"]
 
     # Eficiencia operativa = |gastos operación| / (NII + comisiones netas + ROF)
