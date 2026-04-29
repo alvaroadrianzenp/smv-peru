@@ -153,6 +153,14 @@ FIELDS_TO_CODES_2D: dict[str, str] = {
     "debt_repaid":         "3D0330",
     "financing_cf":        "3D03ST",
     "end_cash":            "3D04ST",
+    # D&A: solo aparece cuando la empresa publica CF con MÉTODO INDIRECTO.
+    # Para empresas con método directo, esta cuenta no existe en SMV y `dna`
+    # quedará None — y por consiguiente `ebitda` y todas las métricas
+    # derivadas (ebitda_margin, debt_to_ebitda, net_debt_to_ebitda,
+    # interest_coverage_ebitda) también serán None. Para esos casos, el
+    # analista puede usar set_dna() para proveer D&A externo (ej. desde
+    # notas a EEFF auditados) y la librería recalcula automáticamente.
+    "dna":                 "3D0602",  # Depreciación, Amortización y Agotamiento
 }
 
 CODIGOS_USADOS_2D: frozenset[str] = frozenset(FIELDS_TO_CODES_2D.values())
@@ -474,7 +482,7 @@ def _map_period_2d(rpj: str, pnl, bal, flow, fiscal_year: int,
               "interest_paid_op", "taxes_paid_op", "operating_cf",
               "ppe_proceeds", "capex_ppe", "capex_intangibles", "investing_cf",
               "dividends_paid_fin", "interest_paid_fin", "debt_issued",
-              "debt_repaid", "financing_cf", "end_cash"):
+              "debt_repaid", "financing_cf", "end_cash", "dna"):
         period[f] = amt(f, flow_e)
 
     # --- Stocks del período anterior (Monto2) para promedios y YoY ---------
@@ -505,7 +513,27 @@ def _map_period_2d(rpj: str, pnl, bal, flow, fiscal_year: int,
     period["operating_margin"] = _safe_div(period["operating_income"], revenue)
     period["net_margin"] = _safe_div(period["net_income"], revenue)
 
-    period["ebitda"] = period["operating_income"]
+    # EBITDA real (no proxy): solo si SMV expone D&A (cuenta 3D0602, disponible
+    # solo en empresas que publican CF con método indirecto). Si la empresa
+    # usa método directo (mayoría en Perú), `ebitda` queda None — junto con
+    # ebitda_margin, debt_to_ebitda, net_debt_to_ebitda, interest_coverage_ebitda.
+    # Para esos casos el analista puede usar set_dna() con D&A externo (notas
+    # a EEFF auditados) y la librería recalcula automáticamente.
+    dna_v = period["dna"]
+    op_inc = period["operating_income"]
+    if dna_v is not None and op_inc is not None:
+        period["ebitda"] = op_inc + abs(dna_v)
+    else:
+        period["ebitda"] = None
+
+    period["ebitda_margin"] = _safe_div(period["ebitda"], revenue)
+    period["debt_to_ebitda"] = (
+        total_debt / period["ebitda"] if period["ebitda"] else None
+    )
+    period["net_debt_to_ebitda"] = (
+        period["net_debt"] / period["ebitda"]
+        if (period["ebitda"] and period["net_debt"] is not None) else None
+    )
 
     period["current_ratio"] = _safe_div(period["current_assets"], period["current_liab"])
     quick_num = None
@@ -513,12 +541,22 @@ def _map_period_2d(rpj: str, pnl, bal, flow, fiscal_year: int,
         quick_num = period["cash"] + period["accounts_receivable"]
     period["quick_ratio"] = _safe_div(quick_num, period["current_liab"])
 
+    # Cobertura de intereses (Times Interest Earned, EBIT-based)
     if period["interest_expense"] is not None and period["interest_expense"] != 0:
         period["interest_coverage"] = _safe_div(
             period["operating_income"], abs(period["interest_expense"])
         )
     else:
         period["interest_coverage"] = None
+
+    # Cobertura con EBITDA real: ebitda / |interest_expense| (None si no hay D&A)
+    if (period["ebitda"] is not None and period["interest_expense"] is not None
+            and period["interest_expense"] != 0):
+        period["interest_coverage_ebitda"] = (
+            period["ebitda"] / abs(period["interest_expense"])
+        )
+    else:
+        period["interest_coverage_ebitda"] = None
 
     if period["income_tax"] is not None and period["pretax_income"]:
         period["effective_tax_rate"] = abs(period["income_tax"]) / period["pretax_income"]
@@ -741,6 +779,79 @@ def _map_period(rpj: str, pnl, bal, flow, fiscal_year: int,
                 quarter: int | None) -> dict | None:
     """Alias retro-compatible que despacha a _map_period_2d (esquema legacy)."""
     return _map_period_2d(rpj, pnl, bal, flow, fiscal_year, quarter)
+
+
+def set_dna(result: dict, dna) -> dict:
+    """Asigna D&A externo a empresas 2D y recalcula EBITDA + métricas dependientes.
+
+    Útil cuando la empresa publica CF con método directo y SMV no expone
+    Depreciación, Amortización y Agotamiento (cuenta 3D0602). El analista
+    puede proveer D&A desde notas a los EEFF auditados (memoria anual,
+    reportes trimestrales) y la librería recalcula automáticamente:
+    ``ebitda``, ``ebitda_margin``, ``debt_to_ebitda``, ``net_debt_to_ebitda``,
+    e ``interest_coverage_ebitda``.
+
+    Args:
+        result: dict devuelto por ``fetch_estados_financieros`` (mutado in-place).
+            Debe tener al menos un período con ``schema='2D'``.
+        dna: D&A en miles de soles. Acepta tres formatos:
+
+            - ``float``: se aplica a TODOS los períodos del result. Útil cuando
+              el result tiene un solo período.
+            - ``dict[int, float]`` mapeo ``{año_fiscal: dna}``: asigna por año.
+            - ``dict[(int, int|None), float]`` mapeo ``{(año, quarter): dna}``:
+              asigna por período exacto (None para anual; 1-4 para trimestre).
+
+    Returns:
+        El mismo ``result`` mutado con métricas recalculadas.
+
+    Ejemplo::
+
+        from smv_peru import fetch_estados_financieros, set_dna
+        datos = fetch_estados_financieros("ALICORC1", desde=2022, hasta=2024)
+        # D&A de las notas a los EEFF auditados (en miles)
+        set_dna(datos, {2022: 420_000, 2023: 450_000, 2024: 480_000})
+        # Ahora datos["periods"][i]["ebitda"] está calculado correctamente.
+    """
+    if not result or not result.get("periods"):
+        return result
+
+    def resolver(period: dict):
+        year = period.get("fiscal_year")
+        quarter = period.get("quarter")
+        if isinstance(dna, (int, float)):
+            return float(dna)
+        if isinstance(dna, dict):
+            # Match por (year, quarter)
+            if (year, quarter) in dna:
+                return float(dna[(year, quarter)])
+            # Match por year (anual o ambiguo)
+            if year in dna:
+                return float(dna[year])
+        return None
+
+    for p in result["periods"]:
+        if p.get("schema") != "2D":
+            continue  # set_dna solo aplica a 2D
+        new_dna = resolver(p)
+        if new_dna is None:
+            continue
+        p["dna"] = new_dna
+        op_inc = p.get("operating_income")
+        if op_inc is None:
+            continue
+        ebitda = op_inc + abs(new_dna)
+        p["ebitda"] = ebitda
+        revenue = p.get("revenue")
+        p["ebitda_margin"] = (ebitda / revenue) if revenue else None
+        total_debt = p.get("total_debt")
+        p["debt_to_ebitda"] = (total_debt / ebitda) if ebitda else None
+        net_debt = p.get("net_debt")
+        p["net_debt_to_ebitda"] = (net_debt / ebitda) if (ebitda and net_debt is not None) else None
+        ie = p.get("interest_expense")
+        if ie is not None and ie != 0:
+            p["interest_coverage_ebitda"] = ebitda / abs(ie)
+    return result
 
 
 # ---------------------------------------------------------------------------

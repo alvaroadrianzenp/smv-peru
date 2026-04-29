@@ -7,12 +7,14 @@ from .client import (
     FIELDS_TO_CODES_2D,
     FIELDS_TO_CODES_2F,
     fetch_estados_financieros,
+    set_dna,
 )
 from .empresas import EMPRESAS, UnknownTickerError, resolve_ticker
 from .excel import to_excel
 
 __all__ = [
     "fetch_estados_financieros",
+    "set_dna",
     "to_excel",
     "FIELDS_TO_CODES",
     "FIELDS_TO_CODES_2D",

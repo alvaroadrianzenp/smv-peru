@@ -211,6 +211,34 @@ SMV envía en cada respuesta `Monto1` (período actual) y `Monto2` (comparativo 
 | `roe` | `net_income / equity` |
 | `roic` | `net_income / (equity + total_debt)` |
 
+### EBITDA y métricas de crédito (esquema 2D)
+
+SMV publica D&A (Depreciación, Amortización y Agotamiento) **solo cuando la empresa elige método indirecto** para su Estado de Flujos de Efectivo. La práctica peruana es mixta: algunas empresas (Backus, Cerro Verde, Cementos Pacasmayo, AENZA, Nexa, PLUZ) usan método indirecto; la mayoría usa método directo.
+
+| Campo | Notas |
+|---|---|
+| `dna` | D&A real desde SMV (cuenta `3D0602`). `None` si la empresa publica con método directo. |
+| `ebitda` | `operating_income + abs(dna)`. **`None` si `dna` no está disponible** — la librería NO usa proxy para no inducir errores en análisis de crédito. |
+| `ebitda_margin` | `ebitda / revenue`. `None` si `ebitda` es `None`. |
+| `debt_to_ebitda` | `total_debt / ebitda`. Ratio de apalancamiento bruto. |
+| `net_debt_to_ebitda` | `net_debt / ebitda`. Apalancamiento neto. |
+| `interest_coverage_ebitda` | `ebitda / abs(interest_expense)`. Cobertura de intereses con EBITDA. |
+
+Para empresas con método directo (sin D&A en SMV), el analista puede proveer D&A manualmente desde **notas a los EEFF auditados** (memoria anual, reportes trimestrales) usando ``set_dna()`` y la librería recalcula EBITDA y todas las métricas dependientes:
+
+```python
+from smv_peru import fetch_estados_financieros, set_dna
+
+datos = fetch_estados_financieros("ALICORC1", desde=2022, hasta=2024)
+# datos["periods"][i]["ebitda"] == None (Alicorp usa método directo)
+
+# Provee D&A externo (en miles de soles, desde notas a EEFF auditados):
+set_dna(datos, {2022: 420_000, 2023: 440_000, 2024: 460_000})
+# Ahora ebitda, ebitda_margin, debt_to_ebitda, etc. están calculados.
+```
+
+`set_dna` acepta también un float único (se aplica a todos los períodos del result) o un dict por `(año, quarter)` para datos trimestrales.
+
 ### Métricas YoY (Year-over-Year)
 
 | Campo | Descripción |
