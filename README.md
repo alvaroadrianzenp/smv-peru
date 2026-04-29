@@ -78,18 +78,21 @@ Cada período del output expone una key `"schema"` (`"2D"` o `"2F"`) para que se
 | `ORYGENC1` | Orygen Perú (ex Enel Generación) | electricidad / generación |
 | `PLUZC1` | Pluz Energía Perú (ex Enel Distribución) | electricidad / distribución |
 | `RELAPAC1` | Refinería La Pampilla | refinación de petróleo |
+| `SCCO` | Southern Peru Copper Corporation (Sucursal) | minería de cobre |
 | `UNACEMC1` | UNACEM | cementos |
 | `VOLCABC1` | Volcan Compañía Minera | minería polimetálica |
 | `YURAC1` | Yura | cementos |
 
-**Bancos (esquema 2F):**
+**Bancos y holdings financieros (esquema 2F):**
 
-| Ticker | Empresa | Esquema |
+| Ticker | Empresa | Tipo |
 |---|---|---|
-| `BBVAC1` | BBVA Perú | 2F |
-| `CREDITC1` | Banco de Crédito del Perú (BCP) | 2F |
-| `INTERBC1` | Interbank (Banco Internacional del Perú) | 2F |
-| `SCOTIAC1` | Scotiabank Perú | 2F |
+| `BAP` | Credicorp Ltd. | Holding (matriz de BCP, Pacífico, Mibanco, Prima AFP) |
+| `BBVAC1` | BBVA Perú | Banco operativo |
+| `CREDITC1` | Banco de Crédito del Perú (BCP) | Banco operativo |
+| `IFS` | Intercorp Financial Services | Holding (matriz de Interbank, Interseguro, Inteligo) |
+| `INTERBC1` | Interbank (Banco Internacional del Perú) | Banco operativo |
+| `SCOTIAC1` | Scotiabank Perú | Banco operativo |
 
 Si el ticker no está en el catálogo, se levanta `UnknownTickerError` con la lista completa en el mensaje.
 

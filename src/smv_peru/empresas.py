@@ -53,6 +53,8 @@ EMPRESAS: dict[str, dict[str, str]] = {
                  "nombre": "Pluz Energía Perú (ex Enel Distribución)"},
     "RELAPAC1": {"rpj": "002766", "ruc": "20259829594", "esquema": "2D",
                  "nombre": "Refinería La Pampilla"},
+    "SCCO":     {"rpj": "B20027", "ruc": "20100147514", "esquema": "2D",
+                 "nombre": "Southern Peru Copper Corporation (Sucursal)"},
     "UNACEMC1": {"rpj": "B30121", "ruc": "20100137390", "esquema": "2D",
                  "nombre": "UNACEM"},
     "VOLCABC1": {"rpj": "CM0001", "ruc": "20383045267", "esquema": "2D",
@@ -60,11 +62,15 @@ EMPRESAS: dict[str, dict[str, str]] = {
     "YURAC1":   {"rpj": "023490", "ruc": "20312372895", "esquema": "2D",
                  "nombre": "Yura"},
 
-    # --- Esquema 2F (bancos) -----------------------------------------------
+    # --- Esquema 2F (bancos y holdings financieros) ------------------------
+    "BAP":      {"rpj": "B60051", "ruc": "0",           "esquema": "2F",
+                 "nombre": "Credicorp Ltd. (holding; matriz de BCP, Pacífico, Mibanco)"},
     "BBVAC1":   {"rpj": "B80004", "ruc": "20100130204", "esquema": "2F",
                  "nombre": "BBVA Perú"},
     "CREDITC1": {"rpj": "B80005", "ruc": "20100047218", "esquema": "2F",
                  "nombre": "Banco de Crédito del Perú (BCP)"},
+    "IFS":      {"rpj": "OE2305", "ruc": "0",           "esquema": "2F",
+                 "nombre": "Intercorp Financial Services (holding; matriz de Interbank, Interseguro, Inteligo)"},
     "INTERBC1": {"rpj": "B80020", "ruc": "20100053455", "esquema": "2F",
                  "nombre": "Interbank (Banco Internacional del Perú)"},
     "SCOTIAC1": {"rpj": "B80012", "ruc": "20100043140", "esquema": "2F",
