@@ -88,6 +88,7 @@ Cada período del output expone una key `"schema"` (`"2D"` o `"2F"`) para que se
 |---|---|---|
 | `BBVAC1` | BBVA Perú | 2F |
 | `CREDITC1` | Banco de Crédito del Perú (BCP) | 2F |
+| `INTERBC1` | Interbank (Banco Internacional del Perú) | 2F |
 | `SCOTIAC1` | Scotiabank Perú | 2F |
 
 Si el ticker no está en el catálogo, se levanta `UnknownTickerError` con la lista completa en el mensaje.

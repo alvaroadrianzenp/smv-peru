@@ -65,6 +65,8 @@ EMPRESAS: dict[str, dict[str, str]] = {
                  "nombre": "BBVA Perú"},
     "CREDITC1": {"rpj": "B80005", "ruc": "20100047218", "esquema": "2F",
                  "nombre": "Banco de Crédito del Perú (BCP)"},
+    "INTERBC1": {"rpj": "B80020", "ruc": "20100053455", "esquema": "2F",
+                 "nombre": "Interbank (Banco Internacional del Perú)"},
     "SCOTIAC1": {"rpj": "B80012", "ruc": "20100043140", "esquema": "2F",
                  "nombre": "Scotiabank Perú"},
 }
