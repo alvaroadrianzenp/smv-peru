@@ -858,25 +858,21 @@ def set_dna(result: dict, dna) -> dict:
 # Coordinación de descargas y normalización trimestral
 # ---------------------------------------------------------------------------
 
-def _detect_cf_ytd(rpj: str, year: int, tipo_code: str, cache_dir: Path) -> bool:
-    """Detecta si el CF para esa empresa-año-tipo viene en YTD acumulado.
-    Compara Q4 vs Anual para una cuenta clave. Si Q4 ≈ Anual → YTD.
-    Cachea las respuestas como efecto colateral."""
-    flow_q4 = _call_smv(OP_FLOW, year, "4", tipo_code, cache_dir)
-    flow_anual = _call_smv(OP_FLOW, year, "A", tipo_code, cache_dir)
+def _check_cf_ytd_from_results(results: dict, rpj: str, year: int, tipo_code: str) -> bool:
+    """Detecta si el CF viene en YTD acumulado usando resultados ya descargados.
+    Compara Q4 vs Anual para una cuenta clave. Si Q4 ≈ Anual → YTD."""
+    flow_q4 = results.get((OP_FLOW, year, "4", tipo_code))
+    flow_anual = results.get((OP_FLOW, year, "A", tipo_code))
     if not flow_q4 or not flow_anual:
         return True  # default: asumir YTD
-    # Tomamos cualquier código de subtotal de operación: 3D01ST o 3F0501.
-    # Probamos ambos hasta encontrar uno con datos.
     for codigo in ("3D01ST", "3F0501"):
         if _is_ytd(flow_q4, flow_anual, rpj, codigo):
             return True
-        # Si encontramos datos pero no es YTD, retornamos False
         q4 = _amount([r for r in flow_q4 if r.get('RPJ') == rpj], codigo)
         anual = _amount([r for r in flow_anual if r.get('RPJ') == rpj], codigo)
         if q4 is not None and anual is not None:
             return False
-    return True  # si no encontramos datos, default YTD
+    return True
 
 
 def fetch_estados_financieros(
@@ -886,6 +882,7 @@ def fetch_estados_financieros(
     tipo: str = "consolidado",
     periodicidad: str = "anual",
     cache_dir: Path | str | None = None,
+    max_workers: int = 10,
 ) -> dict | None:
     """Descarga estados financieros para una empresa peruana desde SMV.
 
@@ -903,6 +900,10 @@ def fetch_estados_financieros(
         tipo: ``"consolidado"`` (default) o ``"individual"``. Cascada automática.
         periodicidad: ``"anual"`` (default) o ``"trimestral"``.
         cache_dir: directorio de cache. None = user cache dir del SO.
+        max_workers: número máximo de descargas SOAP en paralelo. Default 10.
+            Pasa ``max_workers=1`` para descargas secuenciales (modo legacy).
+            El cache local elimina la concurrencia para llamadas ya cacheadas,
+            así que el paralelismo solo importa en cold cache.
 
     Returns:
         dict con keys ``"periods"`` (lista) e ``"info"``. Cada período tiene
@@ -922,10 +923,12 @@ def fetch_estados_financieros(
         )
     if desde > hasta:
         raise ValueError(f"desde ({desde}) no puede ser mayor que hasta ({hasta})")
+    if max_workers < 1:
+        raise ValueError(f"max_workers debe ser >= 1, recibido: {max_workers}")
 
     info = resolve_ticker(ticker)
     rpj = info["rpj"]
-    esquema = info.get("esquema", "2D")  # default 2D para entradas legacy
+    esquema = info.get("esquema", "2D")
     tipo_code = _TIPO_CODES[tipo]
     periodos = _PERIODICIDAD_PERIODOS[periodicidad]
 
@@ -941,26 +944,55 @@ def fetch_estados_financieros(
     else:
         raise ValueError(f"Esquema {esquema!r} no soportado todavía")
 
+    # ---- Fase 1: planificar todas las llamadas SOAP necesarias -----------
+    calls_needed: set[tuple[str, int, str, str]] = set()
+    for y in range(desde, hasta + 1):
+        if periodicidad == "trimestral":
+            # Para detección YTD comparamos Q4 Flow vs Anual Flow.
+            calls_needed.add((OP_FLOW, y, "A", tipo_code))
+        for p in periodos:
+            calls_needed.add((OP_PNL, y, p, tipo_code))
+            calls_needed.add((OP_BAL, y, p, tipo_code))
+            calls_needed.add((OP_FLOW, y, p, tipo_code))
+            if periodicidad == "trimestral" and p in ("2", "3", "4"):
+                calls_needed.add((OP_FLOW, y, str(int(p) - 1), tipo_code))
+
+    # ---- Fase 2: descargar en paralelo (o serial si max_workers=1) -------
+    results: dict[tuple[str, int, str, str], list[dict] | None] = {}
+    if max_workers > 1 and len(calls_needed) > 1:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        workers = min(max_workers, len(calls_needed))
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futures = {
+                ex.submit(_call_smv, op, year, period, t, cache_dir): (op, year, period, t)
+                for (op, year, period, t) in calls_needed
+            }
+            for fut in as_completed(futures):
+                key = futures[fut]
+                try:
+                    results[key] = fut.result()
+                except Exception as e:
+                    logger.warning(f"Llamada SOAP falló para {key}: {e}")
+                    results[key] = None
+    else:
+        for (op, year, period, t) in calls_needed:
+            results[(op, year, period, t)] = _call_smv(op, year, period, t, cache_dir)
+
+    # ---- Fase 3: procesar usando resultados ya descargados ----------------
     periods_data = []
     for y in range(desde, hasta + 1):
-        # Detectar régimen YTD del CF para este año (solo si pidieron trimestral).
-        # Esta detección descarga Q4 + Anual (cacheados), una vez por (empresa, año, tipo).
         cf_is_ytd = False
         if periodicidad == "trimestral":
-            cf_is_ytd = _detect_cf_ytd(rpj, y, tipo_code, cache_dir)
+            cf_is_ytd = _check_cf_ytd_from_results(results, rpj, y, tipo_code)
 
-        # Cache de respuestas para Qn-1 (necesarios si normalizamos)
-        # Pre-descarga lo que necesitamos por trimestre
         for p in periodos:
-            pnl = _call_smv(OP_PNL, y, p, tipo_code, cache_dir)
-            bal = _call_smv(OP_BAL, y, p, tipo_code, cache_dir)
-            flow = _call_smv(OP_FLOW, y, p, tipo_code, cache_dir)
+            pnl = results.get((OP_PNL, y, p, tipo_code))
+            bal = results.get((OP_BAL, y, p, tipo_code))
+            flow = results.get((OP_FLOW, y, p, tipo_code))
 
-            # Normalización trimestral: si el CF es YTD y este es Q2-Q4,
-            # restar el trimestre anterior para obtener period-only.
             if periodicidad == "trimestral" and p in ("2", "3", "4") and cf_is_ytd and flow is not None:
                 prev_p = str(int(p) - 1)
-                flow_prev = _call_smv(OP_FLOW, y, prev_p, tipo_code, cache_dir)
+                flow_prev = results.get((OP_FLOW, y, prev_p, tipo_code))
                 if flow_prev is not None:
                     flow = _subtract_rows(flow, flow_prev)
 
@@ -974,7 +1006,8 @@ def fetch_estados_financieros(
         logger.info(f"SMV: ticker={ticker} no aparece en Consolidado, probando Individual")
         return fetch_estados_financieros(
             ticker, desde, hasta,
-            tipo="individual", periodicidad=periodicidad, cache_dir=cache_dir,
+            tipo="individual", periodicidad=periodicidad,
+            cache_dir=cache_dir, max_workers=max_workers,
         )
 
     if not periods_data:

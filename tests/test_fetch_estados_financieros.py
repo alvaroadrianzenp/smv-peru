@@ -289,3 +289,52 @@ def test_desde_greater_than_hasta_raises():
         fetch_estados_financieros(
             "ALICORC1", desde=2024, hasta=2020, cache_dir=FIXTURES,
         )
+
+
+def test_max_workers_zero_raises():
+    with pytest.raises(ValueError, match="max_workers"):
+        fetch_estados_financieros(
+            "ALICORC1", desde=2023, hasta=2023, cache_dir=FIXTURES, max_workers=0,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Equivalencia serial vs paralelo
+# ---------------------------------------------------------------------------
+
+def test_serial_and_parallel_produce_identical_results_anual():
+    """max_workers=1 (serial) y max_workers>1 (paralelo) deben dar el mismo
+    resultado bit-exacto."""
+    serial = fetch_estados_financieros(
+        "ALICORC1", desde=2021, hasta=2023,
+        cache_dir=FIXTURES, max_workers=1,
+    )
+    parallel = fetch_estados_financieros(
+        "ALICORC1", desde=2021, hasta=2023,
+        cache_dir=FIXTURES, max_workers=10,
+    )
+    assert len(serial["periods"]) == len(parallel["periods"])
+    for ps, pp in zip(serial["periods"], parallel["periods"]):
+        for k in ps:
+            assert ps[k] == pp[k], f"Diferencia en campo {k!r}: serial={ps[k]} parallel={pp[k]}"
+
+
+def test_serial_and_parallel_produce_identical_results_trimestral():
+    """Idem pero con datos trimestrales (incluye normalización period-only,
+    que requiere coordinación entre llamadas paralelas y la fase de procesamiento)."""
+    serial = fetch_estados_financieros(
+        "ALICORC1", desde=2023, hasta=2023, periodicidad="trimestral",
+        cache_dir=FIXTURES, max_workers=1,
+    )
+    parallel = fetch_estados_financieros(
+        "ALICORC1", desde=2023, hasta=2023, periodicidad="trimestral",
+        cache_dir=FIXTURES, max_workers=10,
+    )
+    assert len(serial["periods"]) == len(parallel["periods"])
+    for ps, pp in zip(serial["periods"], parallel["periods"]):
+        # Comparar campos amigables (no raw_accounts que podría tener orden distinto)
+        for k in ps:
+            if k == "raw_accounts":
+                assert set(ps[k].keys()) == set(pp[k].keys())
+            else:
+                assert ps[k] == pp[k], f"Q{ps['quarter']} campo {k!r}: serial={ps[k]} parallel={pp[k]}"

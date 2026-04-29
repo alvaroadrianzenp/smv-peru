@@ -15,6 +15,18 @@ pip install smv-peru[excel]         # opcional: agrega openpyxl para exportar a 
 
 > Mientras no se publique en PyPI, puedes instalarla desde el repositorio local con `pip install -e .` o `uv sync`.
 
+### Performance: descargas paralelas
+
+Las llamadas SOAP a SMV son lentas (~9 segundos cada una). La librería **descarga en paralelo** (10 workers por default) para acelerar consultas multi-año. En cold cache, una consulta de 10 años trimestrales tarda ~2 minutos en lugar de ~20. En warm cache (datos ya descargados), las consultas son instantáneas.
+
+```python
+# Default: 10 workers en paralelo
+datos = fetch_estados_financieros("ALICORC1", desde=2016, hasta=2025, periodicidad="trimestral")
+
+# Para descargas secuenciales (modo legacy):
+datos = fetch_estados_financieros("ALICORC1", desde=2023, hasta=2023, max_workers=1)
+```
+
 ## Uso
 
 ```python
