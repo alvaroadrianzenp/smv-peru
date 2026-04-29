@@ -50,6 +50,7 @@ API pública:
 """
 from __future__ import annotations
 
+import gzip
 import json
 import logging
 import os
@@ -288,6 +289,14 @@ def _call_smv(operacion: str, ejercicio: int, periodo: str, tipo: str,
               cache_dir: Path) -> list[dict] | None:
     """Llama una operación SOAP; cachea en disco. Devuelve la lista de filas.
 
+    El cache se almacena comprimido con gzip (extensión .json.gz). Esto
+    reduce ~96% el tamaño en disco vs JSON crudo (las respuestas SMV tienen
+    mucha redundancia) sin penalizar la velocidad de lectura (la menor I/O
+    compensa el costo de descompresión CPU).
+
+    Compatibilidad: si encuentra archivos .json (formato legacy de versiones
+    anteriores), los lee sin problema. Solo escribe en .json.gz.
+
     Implementa reintentos con backoff exponencial para errores transitorios
     de red (timeouts, connection reset). Errores definitivos (sin Result, JSON
     inválido) NO se reintentan — implican que la respuesta de SMV fue inválida
@@ -296,12 +305,22 @@ def _call_smv(operacion: str, ejercicio: int, periodo: str, tipo: str,
     import random
     import time as _time
 
-    cache_file = cache_dir / f"{operacion}_{ejercicio}_{tipo}_{periodo}.json"
-    if cache_file.exists():
+    base_name = f"{operacion}_{ejercicio}_{tipo}_{periodo}"
+    cache_gz = cache_dir / f"{base_name}.json.gz"
+    cache_json = cache_dir / f"{base_name}.json"  # legacy
+
+    # Leer cache: probar .json.gz primero, fallback a .json legacy
+    if cache_gz.exists():
         try:
-            return json.loads(cache_file.read_text(encoding='utf-8'))
+            with gzip.open(cache_gz, 'rt', encoding='utf-8') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError, EOFError):
+            logger.warning(f"Cache corrupto: {cache_gz}, re-descargando")
+    elif cache_json.exists():
+        try:
+            return json.loads(cache_json.read_text(encoding='utf-8'))
         except (json.JSONDecodeError, OSError):
-            logger.warning(f"Cache corrupto: {cache_file}, re-descargando")
+            logger.warning(f"Cache corrupto: {cache_json}, re-descargando")
 
     req = urllib.request.Request(
         SMV_ENDPOINT,
@@ -347,8 +366,9 @@ def _call_smv(operacion: str, ejercicio: int, periodo: str, tipo: str,
         return None
 
     cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_file.write_text(json.dumps(data), encoding='utf-8')
-    logger.info(f"SMV {operacion} {ejercicio} {tipo} P={periodo}: {len(data)} filas, cacheado")
+    with gzip.open(cache_gz, 'wt', encoding='utf-8') as f:
+        json.dump(data, f)
+    logger.info(f"SMV {operacion} {ejercicio} {tipo} P={periodo}: {len(data)} filas, cacheado (gzip)")
     return data
 
 

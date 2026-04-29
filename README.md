@@ -31,6 +31,12 @@ datos = fetch_eeff("ALICORC1", desde=2023, hasta=2023, max_workers=1)
 
 `max_workers` está limitado a un máximo de 10 para no saturar el web service de SMV.
 
+### Cache comprimido con gzip
+
+El cache local se almacena con compresión gzip (extensión `.json.gz`). Reduce ~96% el tamaño en disco vs JSON crudo, sin penalizar velocidad de lectura (la menor I/O compensa el costo CPU de descompresión). Para uso intensivo (10+ años, decenas de empresas), el cache pasa de ~1 GB a ~50 MB.
+
+Compatibilidad: si tienes archivos `.json` de versiones anteriores, se leen sin problema. Solo se escribe en `.json.gz`.
+
 ### Reintentos automáticos en errores transitorios
 
 Las llamadas SOAP fallidas por timeouts o errores de red se reintentan automáticamente hasta 3 veces con backoff exponencial. Errores definitivos (ej. respuesta sin formato esperado) no se reintentan (probablemente datos no existen).

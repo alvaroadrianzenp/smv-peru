@@ -44,6 +44,46 @@ def test_returns_none_when_cache_missing_and_network_fails(monkeypatch, tmp_path
     assert result is None
 
 
+def test_writes_cache_as_gzip(monkeypatch, tmp_path):
+    """Después de descargar exitosamente, el cache se escribe como .json.gz
+    (no .json). Reduce ~96% el tamaño en disco."""
+    import urllib.request
+    from unittest.mock import MagicMock
+
+    def fake_urlopen(*args, **kwargs):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = (
+            b'<obtener_BalanceGeneralResult>'
+            b'[{"RPJ":"X","Cuenta":"1D01ST","Monto1":100}]'
+            b'</obtener_BalanceGeneralResult>'
+        )
+        mock_resp.__enter__ = lambda self: self
+        mock_resp.__exit__ = lambda self, *a: None
+        return mock_resp
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    result = _call_smv("obtener_BalanceGeneral", 2024, "A", "C", tmp_path)
+    assert result is not None
+
+    # Verificar que se creó .json.gz (no .json)
+    gz_file = tmp_path / "obtener_BalanceGeneral_2024_C_A.json.gz"
+    json_file = tmp_path / "obtener_BalanceGeneral_2024_C_A.json"
+    assert gz_file.exists(), "Cache nuevo debe escribirse como .json.gz"
+    assert not json_file.exists(), "No debe escribir formato .json legacy"
+
+
+def test_reads_cache_legacy_json_format(tmp_path):
+    """Cache pre-existente en formato .json (versión <0.1.0) debe leerse igual."""
+    import json
+    legacy_file = tmp_path / "obtener_BalanceGeneral_2024_C_A.json"
+    legacy_file.write_text(
+        json.dumps([{"RPJ": "X", "Cuenta": "1D01ST", "Monto1": 100}]),
+        encoding="utf-8",
+    )
+    result = _call_smv("obtener_BalanceGeneral", 2024, "A", "C", tmp_path)
+    assert result == [{"RPJ": "X", "Cuenta": "1D01ST", "Monto1": 100}]
+
+
 def test_retries_on_transient_network_failure(monkeypatch, tmp_path):
     """Si la red falla 2 veces y luego responde, debería tener éxito al 3er intento."""
     import urllib.request
