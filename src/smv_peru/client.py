@@ -46,7 +46,7 @@ También usando ``Monto2``, se calculan growth rates como ``revenue_yoy``,
 ``net_income_yoy``, ``loans_yoy``, ``deposits_yoy``, ``equity_yoy``.
 
 API pública:
-  fetch_estados_financieros(ticker, desde, hasta, tipo, periodicidad) -> dict | None
+  fetch_eeff(ticker, desde, hasta, tipo, periodicidad) -> dict | None
 """
 from __future__ import annotations
 
@@ -825,7 +825,7 @@ def set_dna(result: dict, dna) -> dict:
     e ``interest_coverage_ebitda``.
 
     Args:
-        result: dict devuelto por ``fetch_estados_financieros`` (mutado in-place).
+        result: dict devuelto por ``fetch_eeff`` (mutado in-place).
             Debe tener al menos un período con ``schema='2D'``.
         dna: D&A en miles de soles. Acepta tres formatos:
 
@@ -840,8 +840,8 @@ def set_dna(result: dict, dna) -> dict:
 
     Ejemplo::
 
-        from smv_peru import fetch_estados_financieros, set_dna
-        datos = fetch_estados_financieros("ALICORC1", desde=2022, hasta=2024)
+        from smv_peru import fetch_eeff, set_dna
+        datos = fetch_eeff("ALICORC1", desde=2022, hasta=2024)
         # D&A de las notas a los EEFF auditados (en miles)
         set_dna(datos, {2022: 420_000, 2023: 450_000, 2024: 480_000})
         # Ahora datos["periods"][i]["ebitda"] está calculado correctamente.
@@ -908,7 +908,7 @@ def _check_cf_ytd_from_results(results: dict, rpj: str, year: int, tipo_code: st
     return True
 
 
-def fetch_estados_financieros(
+def fetch_eeff(
     ticker: str,
     desde: int,
     hasta: int,
@@ -1054,7 +1054,7 @@ def fetch_estados_financieros(
     # Cascada: si no obtuvimos nada con Consolidado, probar Individual
     if not periods_data and tipo_code == "C":
         logger.info(f"SMV: ticker={ticker} no aparece en Consolidado, probando Individual")
-        return fetch_estados_financieros(
+        return fetch_eeff(
             ticker, desde, hasta,
             tipo="individual", periodicidad=periodicidad,
             cache_dir=cache_dir, max_workers=max_workers,
@@ -1134,7 +1134,7 @@ def fetch_multi(
 
     Returns:
         dict ``{ticker: result | None}`` donde ``result`` tiene el mismo
-        shape que ``fetch_estados_financieros`` (``{"periods": [...], "info": {...}}``).
+        shape que ``fetch_eeff`` (``{"periods": [...], "info": {...}}``).
         Si un ticker no está en el catálogo o no tiene datos, su valor es
         ``None`` (no levanta excepción para no abortar la consulta de los demás).
 
@@ -1157,7 +1157,7 @@ def fetch_multi(
     output: dict[str, dict | None] = {}
     for ticker in tickers:
         try:
-            output[ticker] = fetch_estados_financieros(
+            output[ticker] = fetch_eeff(
                 ticker, desde=desde, hasta=hasta,
                 tipo=tipo, periodicidad=periodicidad,
                 cache_dir=cache_dir, max_workers=max_workers,
@@ -1166,3 +1166,10 @@ def fetch_multi(
             logger.warning(f"fetch_multi: error con {ticker}: {e}")
             output[ticker] = None
     return output
+
+
+# Alias retro-compatible: la función se llamó así originalmente. El nombre
+# `fetch_eeff` (más corto, igual de claro con el acrónimo financiero) es el
+# preferido a partir de v0.1.0. El alias permanece sin DeprecationWarning
+# para no romper código existente.
+fetch_estados_financieros = fetch_eeff

@@ -21,7 +21,7 @@ from smv_peru import (
     EMPRESAS,
     FIELDS_TO_CODES_2D,
     FIELDS_TO_CODES_2F,
-    fetch_estados_financieros,
+    fetch_eeff,
 )
 
 
@@ -52,7 +52,7 @@ for esq in sorted(por_esquema):
 # ---------------------------------------------------------------------------
 seccion("2) Industrial: Alicorp 2023 (esquema 2D)")
 
-resultado = fetch_estados_financieros("ALICORC1", desde=2023, hasta=2023)
+resultado = fetch_eeff("ALICORC1", desde=2023, hasta=2023)
 p = resultado["periods"][0]
 
 print(f"  Schema:         {p['schema']}")
@@ -72,7 +72,7 @@ print(f"  FCF:            S/. {p['fcf']/1_000:,.0f} M")
 # ---------------------------------------------------------------------------
 seccion("3) Banco: BBVA Perú 2024 (esquema 2F)")
 
-resultado = fetch_estados_financieros("BBVAC1", desde=2024, hasta=2024)
+resultado = fetch_eeff("BBVAC1", desde=2024, hasta=2024)
 p = resultado["periods"][0]
 
 print(f"  Schema:                 {p['schema']}")
@@ -99,7 +99,7 @@ print(f"    ROE:                       {p['roe']:.2%}")
 # ---------------------------------------------------------------------------
 seccion("4) Trimestral: Alicorp 2023 — CF normalizado a period-only")
 
-resultado = fetch_estados_financieros(
+resultado = fetch_eeff(
     "ALICORC1", desde=2023, hasta=2023, periodicidad="trimestral",
 )
 
@@ -113,7 +113,7 @@ for p in resultado["periods"]:
     )
 
 # Verificación: la suma de los 4 trimestres debe coincidir con el anual
-anual = fetch_estados_financieros("ALICORC1", desde=2023, hasta=2023)["periods"][0]
+anual = fetch_eeff("ALICORC1", desde=2023, hasta=2023)["periods"][0]
 suma_op = sum(p["operating_cf"] for p in resultado["periods"])
 print()
 print(f"  Suma Q1+Q2+Q3+Q4 operating_cf: S/. {suma_op/1_000:,.0f} M")
@@ -126,7 +126,7 @@ print(f"  Diferencia:                    {abs(suma_op - anual['operating_cf']):,
 # ---------------------------------------------------------------------------
 seccion("5) raw_accounts: cuentas no expuestas como amigables")
 
-p = fetch_estados_financieros("ALICORC1", desde=2023, hasta=2023)["periods"][0]
+p = fetch_eeff("ALICORC1", desde=2023, hasta=2023)["periods"][0]
 print(f"  Total cuentas en raw_accounts (Alicorp 2023): {len(p['raw_accounts'])}")
 print()
 print(f"  Algunas cuentas raras del esquema 2D que SMV publica:")
@@ -159,7 +159,7 @@ for field in ["interest_income", "loans_st", "deposits", "operating_cf"]:
 # ---------------------------------------------------------------------------
 seccion("7) YoY growth: crecimiento vs período anterior")
 
-p = fetch_estados_financieros("BBVAC1", desde=2024, hasta=2024)["periods"][0]
+p = fetch_eeff("BBVAC1", desde=2024, hasta=2024)["periods"][0]
 print(f"  BBVA Perú 2024 vs 2023:")
 for field in ["interest_income_yoy", "net_income_yoy", "loans_yoy", "deposits_yoy", "equity_yoy"]:
     if p.get(field) is not None:

@@ -6,7 +6,8 @@ from .client import (
     FIELDS_TO_CODES,
     FIELDS_TO_CODES_2D,
     FIELDS_TO_CODES_2F,
-    fetch_estados_financieros,
+    fetch_eeff,
+    fetch_estados_financieros,  # alias retro-compatible
     fetch_multi,
     set_dna,
 )
@@ -15,6 +16,7 @@ from .excel import to_excel
 from .csv_export import to_csv
 
 __all__ = [
+    "fetch_eeff",
     "fetch_estados_financieros",
     "fetch_multi",
     "set_dna",

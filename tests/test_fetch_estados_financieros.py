@@ -291,6 +291,12 @@ def test_desde_greater_than_hasta_raises():
         )
 
 
+def test_fetch_estados_financieros_is_alias_of_fetch_eeff():
+    """Backward-compat: el nombre antiguo debe seguir funcionando idéntico al nuevo."""
+    from smv_peru import fetch_eeff, fetch_estados_financieros
+    assert fetch_eeff is fetch_estados_financieros
+
+
 def test_max_workers_zero_raises():
     with pytest.raises(ValueError, match="max_workers"):
         fetch_estados_financieros(

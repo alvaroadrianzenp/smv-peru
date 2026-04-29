@@ -23,10 +23,10 @@ Las llamadas SOAP a SMV son lentas (~9 segundos cada una). La librería **descar
 
 ```python
 # Default: 10 workers en paralelo
-datos = fetch_estados_financieros("ALICORC1", desde=2016, hasta=2025, periodicidad="trimestral")
+datos = fetch_eeff("ALICORC1", desde=2016, hasta=2025, periodicidad="trimestral")
 
 # Para descargas secuenciales (modo legacy):
-datos = fetch_estados_financieros("ALICORC1", desde=2023, hasta=2023, max_workers=1)
+datos = fetch_eeff("ALICORC1", desde=2023, hasta=2023, max_workers=1)
 ```
 
 `max_workers` está limitado a un máximo de 10 para no saturar el web service de SMV.
@@ -57,17 +57,17 @@ sectorial = fetch_multi(["ALICORC1", "TICKER_INVALIDO"], desde=2023, hasta=2023)
 ## Uso
 
 ```python
-from smv_peru import fetch_estados_financieros
+from smv_peru import fetch_eeff
 
 # Anual, consolidado (defaults)
-datos = fetch_estados_financieros(
+datos = fetch_eeff(
     "ALICORC1",
     desde=2021,
     hasta=2023,
 )
 
 # Trimestral, individual
-datos_q = fetch_estados_financieros(
+datos_q = fetch_eeff(
     "ALICORC1",
     desde=2023, hasta=2023,
     tipo="individual",
@@ -96,9 +96,9 @@ if diferencias_de_cambio:
 Con la extensión `[excel]` instalada (`pip install smv-peru[excel]`), genera un archivo `.xlsx` con los EEFF listos para tu modelo:
 
 ```python
-from smv_peru import fetch_estados_financieros, to_excel
+from smv_peru import fetch_eeff, to_excel
 
-datos = fetch_estados_financieros("ALICORC1", desde=2019, hasta=2024)
+datos = fetch_eeff("ALICORC1", desde=2019, hasta=2024)
 to_excel(datos, "alicorp_2019_2024.xlsx", ticker="ALICORC1")
 
 # Multi-empresa: genera Excel con una hoja por ticker
@@ -112,8 +112,8 @@ Layout: filas = campos amigables agrupados por sección (Estado de Resultados, B
 ### Exportar a CSV (sin dependencias externas)
 
 ```python
-from smv_peru import fetch_estados_financieros, to_csv
-datos = fetch_estados_financieros("ALICORC1", desde=2019, hasta=2024)
+from smv_peru import fetch_eeff, to_csv
+datos = fetch_eeff("ALICORC1", desde=2019, hasta=2024)
 to_csv(datos, "alicorp_2019_2024.csv", ticker="ALICORC1")
 ```
 
@@ -173,7 +173,7 @@ Estas empresas son muy líquidas en BVL pero usan **otros esquemas contables** q
 
 Cuando se añada soporte para 2E, estos tickers entrarán al catálogo.
 
-Por otro lado, hay empresas que cotizan en BVL pero **no publican EEFF en el endpoint SMV usado por esta librería** (ya sea porque su matriz consolidante reporta en otro país o por régimen especial). En esos casos `fetch_estados_financieros` retornaría `None`. Ejemplos detectados: Telefónica del Perú (deslistada de trading activo), Southern Copper (ADR sin EEFF en SMV).
+Por otro lado, hay empresas que cotizan en BVL pero **no publican EEFF en el endpoint SMV usado por esta librería** (ya sea porque su matriz consolidante reporta en otro país o por régimen especial). En esos casos `fetch_eeff` retornaría `None`. Ejemplos detectados: Telefónica del Perú (deslistada de trading activo), Southern Copper (ADR sin EEFF en SMV).
 
 ## Formato del output
 
@@ -302,9 +302,9 @@ Para empresas con método directo (sin D&A en SMV), el analista puede proveer D&
 > **Nota sobre estimación automática:** evaluamos estimar D&A automáticamente vía la identidad contable `D&A ≈ PPE_inicio + Capex − PPE_cierre`. La aproximación da error <10% en industriales (consumo, cementos, energía) pero **falla feo en mineras** (errores hasta ±140% por activos de exploración, desarrollo de minas, costos de remoción que no quedan en la cuenta PP&E estándar). Como las mineras son ~30% del catálogo y el análisis crediticio es donde más importa la precisión, **decidimos no implementar la estimación automática**. La solución correcta para D&A precisa de toda empresa es parsear las notas a los EEFF auditados (donde está siempre explícita) — eso queda como roadmap para v0.2+.
 
 ```python
-from smv_peru import fetch_estados_financieros, set_dna
+from smv_peru import fetch_eeff, set_dna
 
-datos = fetch_estados_financieros("ALICORC1", desde=2022, hasta=2024)
+datos = fetch_eeff("ALICORC1", desde=2022, hasta=2024)
 # datos["periods"][i]["ebitda"] == None (Alicorp usa método directo)
 
 # Provee D&A externo (en miles de soles, desde notas a EEFF auditados):
