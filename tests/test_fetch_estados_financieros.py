@@ -117,6 +117,27 @@ def test_alicorp_2023_total_liabilities_matches_audited_pdf():
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
+# Currency: industriales y bancos en PEN, mineras en USD
+# ---------------------------------------------------------------------------
+
+def test_alicorp_currency_is_pen():
+    """Alicorp (industrial) reporta en soles."""
+    r = fetch_estados_financieros(
+        "ALICORC1", desde=2023, hasta=2023, cache_dir=FIXTURES,
+    )
+    assert r["periods"][0]["currency"] == "PEN"
+    assert r["info"]["currency"] == "PEN"
+
+
+def test_currency_in_info_dict():
+    """info dict expone currency a nivel del result completo."""
+    r = fetch_estados_financieros(
+        "ALICORC1", desde=2021, hasta=2023, cache_dir=FIXTURES,
+    )
+    assert "currency" in r["info"]
+
+
+# ---------------------------------------------------------------------------
 # Cuentas adicionales agregadas en versión Tier B (Opción B)
 # ---------------------------------------------------------------------------
 

@@ -265,10 +265,13 @@ def _populate_eeff_sheet(ws, periods: list[dict], ticker: str | None) -> None:
     ws["A1"].font = title_font
     schema_label = {"2D": "2D — Industriales", "2F": "2F — Bancos"}.get(schema, schema)
     ws["A2"] = f"Esquema: {schema_label}"
-    ws["A3"] = f"Generado: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
-    ws["A4"] = "Montos en miles. Ratios como porcentajes."
+    currency = periods[0].get("currency") or "—"
+    currency_full = {"PEN": "Soles peruanos (PEN)", "USD": "Dólares (USD)"}.get(currency, currency)
+    ws["A3"] = f"Moneda: {currency_full}"
+    ws["A4"] = f"Generado: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+    ws["A5"] = "Montos en miles. Ratios como porcentajes."
 
-    HEADER_ROW = 6
+    HEADER_ROW = 7
     LABEL_COL = 1
     FIRST_DATA_COL = 2
 

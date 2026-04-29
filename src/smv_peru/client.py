@@ -352,6 +352,26 @@ def _call_smv(operacion: str, ejercicio: int, periodo: str, tipo: str,
     return data
 
 
+def _detect_currency(rows: list[dict]) -> str | None:
+    """Detecta moneda desde el campo 'Moneda' de la primera fila.
+
+    SMV publica como string 'Soles', 'Dolares' (con codificación variable;
+    a veces aparece como 'D lares' por encoding). Normaliza a códigos ISO
+    'PEN' / 'USD'. Devuelve None si no logra clasificar.
+    """
+    if not rows:
+        return None
+    raw = (rows[0].get('Moneda') or '').strip().upper()
+    if not raw:
+        return None
+    # Heurística robusta a problemas de encoding ('Dolares', 'D lares', 'Dólares')
+    if 'SOL' in raw:
+        return "PEN"
+    if 'DOLAR' in raw or 'LARES' in raw:  # 'D lares' tiene 'LARES'
+        return "USD"
+    return raw  # devolver crudo si no clasificamos
+
+
 def _amount(rows: list[dict], cuenta: str, monto_field: str = "Monto1"):
     """Lee el monto de una cuenta. monto_field='Monto1' (actual) o 'Monto2' (anterior)."""
     for r in rows:
@@ -509,6 +529,7 @@ def _map_period_2d(rpj: str, pnl, bal, flow, fiscal_year: int,
         "schema": "2D",
         "fiscal_year": fiscal_year,
         "quarter": quarter,
+        "currency": _detect_currency(pnl_e) or _detect_currency(bal_e),
     }
 
     period["revenue"] = revenue
@@ -705,6 +726,7 @@ def _map_period_2f(rpj: str, pnl, bal, flow, fiscal_year: int,
         "schema": "2F",
         "fiscal_year": fiscal_year,
         "quarter": quarter,
+        "currency": _detect_currency(pnl_e) or _detect_currency(bal_e),
     }
 
     # P&L
@@ -1121,6 +1143,10 @@ def fetch_eeff(
             f"[{', '.join(muestra)}{extra}]"
         )
 
+    # Moneda: tomada del primer período (todas las empresas reportan
+    # consistentemente en una sola moneda a lo largo del tiempo).
+    currency = periods_data[0].get("currency") if periods_data else None
+
     return {
         "periods": periods_data,
         "info": {
@@ -1129,6 +1155,7 @@ def fetch_eeff(
             "schema": esquema,
             "tipo": tipo,
             "periodicidad": periodicidad,
+            "currency": currency,
             "desde": desde,
             "hasta": hasta,
             "periods_requested": all_requested,

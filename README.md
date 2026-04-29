@@ -199,7 +199,10 @@ result["info"] == {
 Si pides `desde=2024, hasta=2026 trimestral` y SMV solo tiene Q1 2026 publicado al momento, `periods_missing` listará `[(2026, 2), (2026, 3), (2026, 4)]` y se emite un WARNING. Útil para detectar gaps de data sin tener que comparar manualmente.
 
 **Convenciones de unidades:**
-- Montos en **miles** de la moneda reportada por la empresa (típicamente soles). Ej. `revenue = 13_655_764` ≈ S/. 13.66 mil millones.
+- Montos en **miles** de la moneda reportada por la empresa. Cada período expone `period["currency"]` con código ISO (`"PEN"` soles, `"USD"` dólares). Ejemplos:
+  - **Industriales y bancos** (Alicorp, BBVA, UNACEM, etc.): reportan en **PEN**.
+  - **Mineras** (Buenaventura, Cerro Verde, Volcan, Minsur, Southern Copper, Nexa): reportan en **USD** (sus ventas son commodities denominados en dólares).
+- **Importante:** sumar o comparar revenue entre PEN y USD sin convertir es incorrecto. Verifica siempre `period["currency"]` antes de hacer comparativos sectoriales.
 - Ratios en **decimales**, NO porcentajes. Ej. `roe = 0.14` significa 14%.
 - Algunos signos siguen la convención SMV (gastos y salidas de caja vienen negativos): `cogs`, `interest_expense`, `income_tax`, `capex_ppe`, `capex_intangibles`, `debt_repaid`. Los campos derivados de "salidas" agregadas (`dividends_paid`, `interest_paid`, `taxes_paid`, `capex_total`) se exponen en valor absoluto positivo.
 
