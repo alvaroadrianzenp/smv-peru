@@ -29,6 +29,31 @@ datos = fetch_estados_financieros("ALICORC1", desde=2016, hasta=2025, periodicid
 datos = fetch_estados_financieros("ALICORC1", desde=2023, hasta=2023, max_workers=1)
 ```
 
+`max_workers` está limitado a un máximo de 10 para no saturar el web service de SMV.
+
+### Reintentos automáticos en errores transitorios
+
+Las llamadas SOAP fallidas por timeouts o errores de red se reintentan automáticamente hasta 3 veces con backoff exponencial. Errores definitivos (ej. respuesta sin formato esperado) no se reintentan (probablemente datos no existen).
+
+### Múltiples empresas en una sola llamada
+
+```python
+from smv_peru import fetch_multi
+
+# Descarga un sector de una vez (cache compartido = más rápido que loop)
+sectorial = fetch_multi(
+    ["CPACASC1", "UNACEMC1", "YURAC1"],
+    desde=2019, hasta=2024,
+)
+# sectorial == {"CPACASC1": {...}, "UNACEMC1": {...}, "YURAC1": {...}}
+
+# Tickers inválidos quedan como None sin abortar el resto
+sectorial = fetch_multi(["ALICORC1", "TICKER_INVALIDO"], desde=2023, hasta=2023)
+# sectorial["ALICORC1"] tiene datos; sectorial["TICKER_INVALIDO"] es None
+```
+
+`to_excel` y `to_csv` detectan automáticamente single vs multi-empresa: con multi, generan una hoja por ticker (Excel) o secciones por ticker (CSV).
+
 ## Uso
 
 ```python
@@ -75,9 +100,24 @@ from smv_peru import fetch_estados_financieros, to_excel
 
 datos = fetch_estados_financieros("ALICORC1", desde=2019, hasta=2024)
 to_excel(datos, "alicorp_2019_2024.xlsx", ticker="ALICORC1")
+
+# Multi-empresa: genera Excel con una hoja por ticker
+from smv_peru import fetch_multi
+sectorial = fetch_multi(["CPACASC1", "UNACEMC1", "YURAC1"], desde=2019, hasta=2024)
+to_excel(sectorial, "cementeras_2019_2024.xlsx")
 ```
 
 Layout: filas = campos amigables agrupados por sección (Estado de Resultados, Balance, Cash Flow, Ratios, YoY); columnas = períodos cronológicos (`2019, 2020, ...` o `2023Q1, 2023Q2, ...` para trimestral). Header con metadata (ticker, esquema, fecha). Soporta industriales (2D) y bancos (2F) automáticamente. Con `include_raw=True` agrega una segunda hoja con las cuentas adicionales que SMV publica.
+
+### Exportar a CSV (sin dependencias externas)
+
+```python
+from smv_peru import fetch_estados_financieros, to_csv
+datos = fetch_estados_financieros("ALICORC1", desde=2019, hasta=2024)
+to_csv(datos, "alicorp_2019_2024.csv", ticker="ALICORC1")
+```
+
+Solo usa `csv` de stdlib. Universal: abre en Excel, Numbers, Google Sheets, scripts. Soporta single y multi-empresa.
 
 ## Tickers soportados
 

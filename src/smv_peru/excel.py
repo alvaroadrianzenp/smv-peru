@@ -227,72 +227,17 @@ def _format_for(fmt: str) -> str | None:
     return None
 
 
-def to_excel(
-    result: dict,
-    filepath: str | Path,
-    include_raw: bool = False,
-    ticker: str | None = None,
-) -> Path:
-    """Exporta el resultado de ``fetch_estados_financieros`` a un archivo Excel.
-
-    Layout: filas = campos amigables agrupados por sección (Estado de
-    Resultados, Balance, Cash Flow, Ratios, YoY). Columnas = períodos en
-    orden cronológico. Header con metadata (ticker, esquema, fecha).
-
-    Soporta ambos esquemas automáticamente: si los períodos tienen
-    ``schema='2D'`` usa el layout de industriales; ``schema='2F'`` usa el
-    layout de bancos.
-
-    Args:
-        result: dict devuelto por ``fetch_estados_financieros``. Debe tener
-            ``periods`` con al menos 1 período.
-        filepath: ruta del archivo Excel a generar (.xlsx).
-        include_raw: si True, agrega una hoja ``Cuentas adicionales`` con
-            las ``raw_accounts`` (códigos SMV con nombres oficiales en
-            español). Default: False.
-        ticker: ticker BVL (opcional). Si se pasa y está en el catálogo, se
-            usa para enriquecer el header con el nombre de la empresa.
-
-    Returns:
-        Path absoluto del archivo generado.
-
-    Raises:
-        ImportError: si openpyxl no está instalado. Instalar con::
-
-            pip install smv-peru[excel]
-
-        ValueError: si ``result`` no tiene ``periods`` o está vacío.
-
-    Ejemplo::
-
-        from smv_peru import fetch_estados_financieros, to_excel
-        datos = fetch_estados_financieros("ALICORC1", desde=2019, hasta=2024)
-        to_excel(datos, "alicorp_2019_2024.xlsx", ticker="ALICORC1")
-    """
-    if not OPENPYXL_AVAILABLE:
-        raise ImportError(
-            "openpyxl no está instalado. Para exportar a Excel ejecuta: "
-            "pip install smv-peru[excel]"
-        )
-    if not result or not result.get("periods"):
-        raise ValueError("'result' está vacío o no contiene 'periods'")
-
-    periods = result["periods"]
+def _populate_eeff_sheet(ws, periods: list[dict], ticker: str | None) -> None:
+    """Puebla una hoja con el layout de EEFF: header + secciones + campos."""
     schema = periods[0].get("schema", "2D")
     sections = SECTIONS_2D if schema == "2D" else SECTIONS_2F
 
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "EEFF"
-
-    # Estilos
     title_font = Font(bold=True, size=14)
     bold = Font(bold=True)
     header_fill = PatternFill(start_color="DDDDDD", end_color="DDDDDD", fill_type="solid")
     section_fill = PatternFill(start_color="C0C0C0", end_color="C0C0C0", fill_type="solid")
     right_align = Alignment(horizontal="right")
 
-    # Metadata header
     nombre_emp = ""
     if ticker and ticker in EMPRESAS:
         nombre_emp = EMPRESAS[ticker]["nombre"]
@@ -311,7 +256,6 @@ def to_excel(
     LABEL_COL = 1
     FIRST_DATA_COL = 2
 
-    # Encabezados de períodos
     period_labels = [_period_label(p) for p in periods]
     label_cell = ws.cell(row=HEADER_ROW, column=LABEL_COL, value="")
     label_cell.fill = header_fill
@@ -321,10 +265,8 @@ def to_excel(
         cell.fill = header_fill
         cell.alignment = right_align
 
-    # Cuerpo: secciones y campos
     current_row = HEADER_ROW + 1
     for section_name, fields in sections:
-        # Fila de sección
         c = ws.cell(row=current_row, column=LABEL_COL, value=section_name)
         c.font = bold
         c.fill = section_fill
@@ -332,7 +274,6 @@ def to_excel(
             ws.cell(row=current_row, column=col).fill = section_fill
         current_row += 1
 
-        # Filas de campos
         for field_key, label, fmt in fields:
             ws.cell(row=current_row, column=LABEL_COL, value="  " + label)
             num_fmt = _format_for(fmt)
@@ -349,49 +290,121 @@ def to_excel(
                     cell.alignment = right_align
             current_row += 1
 
-        current_row += 1  # fila vacía entre secciones
+        current_row += 1
 
-    # Anchos de columnas
     ws.column_dimensions[get_column_letter(LABEL_COL)].width = 38
     for i in range(len(periods)):
         ws.column_dimensions[get_column_letter(FIRST_DATA_COL + i)].width = 14
 
-    # Freeze panes: header de columnas + label de filas
     ws.freeze_panes = ws.cell(row=HEADER_ROW + 1, column=FIRST_DATA_COL)
 
-    # Hoja opcional: cuentas adicionales (raw_accounts)
-    if include_raw:
-        ws_raw = wb.create_sheet("Cuentas adicionales (raw)")
-        all_codes: dict[str, str] = {}
-        for p in periods:
-            for code, info in p.get("raw_accounts", {}).items():
-                if code not in all_codes:
-                    all_codes[code] = info.get("nombre", code) or code
 
-        ws_raw.cell(row=1, column=1, value="Código SMV").font = bold
-        ws_raw.cell(row=1, column=2, value="Descripción oficial").font = bold
-        for i, label in enumerate(period_labels):
-            cell = ws_raw.cell(row=1, column=3 + i, value=label)
-            cell.font = bold
-            cell.fill = header_fill
-            cell.alignment = right_align
-        ws_raw.cell(row=1, column=1).fill = header_fill
-        ws_raw.cell(row=1, column=2).fill = header_fill
+def _populate_raw_sheet(ws, periods: list[dict]) -> None:
+    """Puebla una hoja con raw_accounts (códigos SMV + descripción + montos)."""
+    bold = Font(bold=True)
+    header_fill = PatternFill(start_color="DDDDDD", end_color="DDDDDD", fill_type="solid")
+    right_align = Alignment(horizontal="right")
 
-        for r, (code, nombre) in enumerate(sorted(all_codes.items()), start=2):
-            ws_raw.cell(row=r, column=1, value=code)
-            ws_raw.cell(row=r, column=2, value=nombre)
-            for i, p in enumerate(periods):
-                if code in p.get("raw_accounts", {}):
-                    cell = ws_raw.cell(row=r, column=3 + i, value=p["raw_accounts"][code]["monto"])
-                    cell.number_format = '#,##0;(#,##0);"—"'
-                    cell.alignment = right_align
+    period_labels = [_period_label(p) for p in periods]
+    all_codes: dict[str, str] = {}
+    for p in periods:
+        for code, info in p.get("raw_accounts", {}).items():
+            if code not in all_codes:
+                all_codes[code] = info.get("nombre", code) or code
 
-        ws_raw.column_dimensions["A"].width = 12
-        ws_raw.column_dimensions["B"].width = 55
-        for i in range(len(periods)):
-            ws_raw.column_dimensions[get_column_letter(3 + i)].width = 14
-        ws_raw.freeze_panes = ws_raw.cell(row=2, column=3)
+    ws.cell(row=1, column=1, value="Código SMV").font = bold
+    ws.cell(row=1, column=2, value="Descripción oficial").font = bold
+    for i, label in enumerate(period_labels):
+        cell = ws.cell(row=1, column=3 + i, value=label)
+        cell.font = bold
+        cell.fill = header_fill
+        cell.alignment = right_align
+    ws.cell(row=1, column=1).fill = header_fill
+    ws.cell(row=1, column=2).fill = header_fill
+
+    for r, (code, nombre) in enumerate(sorted(all_codes.items()), start=2):
+        ws.cell(row=r, column=1, value=code)
+        ws.cell(row=r, column=2, value=nombre)
+        for i, p in enumerate(periods):
+            if code in p.get("raw_accounts", {}):
+                cell = ws.cell(row=r, column=3 + i, value=p["raw_accounts"][code]["monto"])
+                cell.number_format = '#,##0;(#,##0);"—"'
+                cell.alignment = right_align
+
+    ws.column_dimensions["A"].width = 12
+    ws.column_dimensions["B"].width = 55
+    for i in range(len(periods)):
+        ws.column_dimensions[get_column_letter(3 + i)].width = 14
+    ws.freeze_panes = ws.cell(row=2, column=3)
+
+
+def to_excel(
+    result: dict,
+    filepath: str | Path,
+    include_raw: bool = False,
+    ticker: str | None = None,
+) -> Path:
+    """Exporta el resultado de ``fetch_estados_financieros`` o ``fetch_multi`` a un archivo Excel.
+
+    Detecta automáticamente si ``result`` es de una empresa (output de
+    ``fetch_estados_financieros``) o múltiples (output de ``fetch_multi``).
+
+    **Single empresa:** una hoja "EEFF" con secciones P&L/Balance/CF/Ratios/YoY.
+    **Multi-empresa:** una hoja por ticker, nombrada con el ticker.
+
+    Layout: filas = campos amigables agrupados por sección. Columnas = períodos
+    cronológicos. Header con metadata (ticker, esquema, fecha).
+
+    Args:
+        result: dict de ``fetch_estados_financieros`` (con ``periods``) o
+            ``fetch_multi`` (dict de dicts).
+        filepath: ruta del archivo Excel a generar (.xlsx).
+        include_raw: si True, agrega hoja ``Cuentas adicionales`` con raw_accounts.
+            Para multi-empresa, una hoja raw por ticker con sufijo ``_raw``.
+        ticker: ticker BVL (opcional, solo single-empresa). Enriquece header.
+
+    Returns:
+        Path absoluto del archivo generado.
+
+    Raises:
+        ImportError: si openpyxl no está instalado. ``pip install smv-peru[excel]``.
+        ValueError: si ``result`` está vacío.
+    """
+    if not OPENPYXL_AVAILABLE:
+        raise ImportError(
+            "openpyxl no está instalado. Para exportar a Excel ejecuta: "
+            "pip install smv-peru[excel]"
+        )
+    if not result:
+        raise ValueError("'result' está vacío")
+
+    # Detectar shape: single (con 'periods') vs multi (dict de dicts)
+    is_multi = "periods" not in result
+
+    wb = Workbook()
+    wb.remove(wb.active)  # eliminar hoja default vacía
+
+    if is_multi:
+        # Multi-empresa: filtrar tickers válidos (con datos)
+        valid_items = [(t, r) for t, r in result.items() if r and r.get("periods")]
+        if not valid_items:
+            raise ValueError(
+                "'result' multi-empresa no tiene ningún ticker con datos"
+            )
+        for ticker_i, single_result in valid_items:
+            ws = wb.create_sheet(ticker_i[:31])  # Excel limit: 31 chars sheet name
+            _populate_eeff_sheet(ws, single_result["periods"], ticker_i)
+            if include_raw:
+                ws_raw = wb.create_sheet(f"{ticker_i[:25]}_raw")
+                _populate_raw_sheet(ws_raw, single_result["periods"])
+    else:
+        if not result.get("periods"):
+            raise ValueError("'result' no contiene 'periods'")
+        ws = wb.create_sheet("EEFF")
+        _populate_eeff_sheet(ws, result["periods"], ticker)
+        if include_raw:
+            ws_raw = wb.create_sheet("Cuentas adicionales (raw)")
+            _populate_raw_sheet(ws_raw, result["periods"])
 
     filepath = Path(filepath)
     wb.save(filepath)

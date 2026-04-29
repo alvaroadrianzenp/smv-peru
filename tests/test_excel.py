@@ -20,7 +20,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 # ---------------------------------------------------------------------------
 
 def test_to_excel_raises_on_empty_result(tmp_path):
-    with pytest.raises(ValueError, match="periods"):
+    with pytest.raises(ValueError):
         to_excel({}, tmp_path / "out.xlsx")
 
 

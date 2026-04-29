@@ -69,6 +69,11 @@ SMV_ENDPOINT = "https://mvnet.smv.gob.pe/ws_od_eeff/WebServiceInfoFinanciera.asm
 SMV_NAMESPACE = "http://tempuri.org/"
 SMV_TIMEOUT_S = 120
 
+# Límite máximo de workers en paralelo: no saturar el web service de SMV.
+MAX_WORKERS_LIMIT = 10
+# Reintentos en errores de red transitorios (timeout, connection reset).
+SMV_MAX_RETRIES = 3
+
 
 def _user_cache_dir(app_name: str) -> Path:
     """Directorio de cache estándar del usuario, según convenciones del SO."""
@@ -266,7 +271,16 @@ def _soap_envelope(operacion: str, ejercicio: int, periodo: str, tipo: str) -> b
 
 def _call_smv(operacion: str, ejercicio: int, periodo: str, tipo: str,
               cache_dir: Path) -> list[dict] | None:
-    """Llama una operación SOAP; cachea en disco. Devuelve la lista de filas."""
+    """Llama una operación SOAP; cachea en disco. Devuelve la lista de filas.
+
+    Implementa reintentos con backoff exponencial para errores transitorios
+    de red (timeouts, connection reset). Errores definitivos (sin Result, JSON
+    inválido) NO se reintentan — implican que la respuesta de SMV fue inválida
+    semánticamente (ej. año/empresa sin datos).
+    """
+    import random
+    import time as _time
+
     cache_file = cache_dir / f"{operacion}_{ejercicio}_{tipo}_{periodo}.json"
     if cache_file.exists():
         try:
@@ -282,11 +296,29 @@ def _call_smv(operacion: str, ejercicio: int, periodo: str, tipo: str,
             "SOAPAction": f'"{SMV_NAMESPACE}{operacion}"',
         },
     )
-    try:
-        with urllib.request.urlopen(req, timeout=SMV_TIMEOUT_S) as resp:
-            raw = resp.read().decode('utf-8', errors='replace')
-    except (urllib.error.URLError, TimeoutError, OSError) as e:
-        logger.warning(f"SMV {operacion} {ejercicio} {tipo} P={periodo} falló: {e}")
+
+    raw = None
+    for attempt in range(SMV_MAX_RETRIES + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=SMV_TIMEOUT_S) as resp:
+                raw = resp.read().decode('utf-8', errors='replace')
+            break  # éxito
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            if attempt == SMV_MAX_RETRIES:
+                logger.warning(
+                    f"SMV {operacion} {ejercicio} {tipo} P={periodo} "
+                    f"falló tras {SMV_MAX_RETRIES + 1} intentos: {e}"
+                )
+                return None
+            sleep_s = (2 ** attempt) + random.uniform(0, 0.5)
+            logger.info(
+                f"SMV {operacion} {ejercicio} {tipo} P={periodo} intento "
+                f"{attempt + 1}/{SMV_MAX_RETRIES + 1} falló ({e}); "
+                f"reintentando en {sleep_s:.1f}s"
+            )
+            _time.sleep(sleep_s)
+
+    if raw is None:
         return None
 
     m = re.search(rf'<{operacion}Result>(.*?)</{operacion}Result>', raw, re.DOTALL)
@@ -924,8 +956,11 @@ def fetch_estados_financieros(
         )
     if desde > hasta:
         raise ValueError(f"desde ({desde}) no puede ser mayor que hasta ({hasta})")
-    if max_workers < 1:
-        raise ValueError(f"max_workers debe ser >= 1, recibido: {max_workers}")
+    if max_workers < 1 or max_workers > MAX_WORKERS_LIMIT:
+        raise ValueError(
+            f"max_workers debe estar entre 1 y {MAX_WORKERS_LIMIT} (límite para "
+            f"no saturar SMV), recibido: {max_workers}"
+        )
 
     info = resolve_ticker(ticker)
     rpj = info["rpj"]
@@ -946,6 +981,9 @@ def fetch_estados_financieros(
         raise ValueError(f"Esquema {esquema!r} no soportado todavía")
 
     # ---- Fase 1: planificar todas las llamadas SOAP necesarias -----------
+    logger.info(
+        f"smv-peru: descargando {ticker} {desde}-{hasta} {periodicidad} ({tipo})..."
+    )
     calls_needed: set[tuple[str, int, str, str]] = set()
     for y in range(desde, hasta + 1):
         if periodicidad == "trimestral":
@@ -959,6 +997,17 @@ def fetch_estados_financieros(
                 calls_needed.add((OP_FLOW, y, str(int(p) - 1), tipo_code))
 
     # ---- Fase 2: descargar en paralelo (o serial si max_workers=1) -------
+    # Verificar cuántos archivos están en cache para informar al usuario
+    cached_count = sum(
+        1 for (op, year, period, t) in calls_needed
+        if (cache_dir / f"{op}_{year}_{t}_{period}.json").exists()
+    )
+    if cached_count < len(calls_needed):
+        logger.info(
+            f"smv-peru: {len(calls_needed)} llamadas SOAP planificadas, "
+            f"{cached_count} en cache, {len(calls_needed) - cached_count} a descargar"
+        )
+
     results: dict[tuple[str, int, str, str], list[dict] | None] = {}
     if max_workers > 1 and len(calls_needed) > 1:
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1055,3 +1104,65 @@ def fetch_estados_financieros(
             "periods_missing": periods_missing,
         },
     }
+
+
+def fetch_multi(
+    tickers: list[str],
+    desde: int,
+    hasta: int,
+    tipo: str = "consolidado",
+    periodicidad: str = "anual",
+    cache_dir: Path | str | None = None,
+    max_workers: int = 10,
+) -> dict[str, dict | None]:
+    """Descarga estados financieros para múltiples empresas.
+
+    Aprovecha el cache compartido: las respuestas SOAP de SMV traen TODAS
+    las empresas peruanas en una sola llamada, así que descargar varios
+    tickers del mismo año/tipo reusa los mismos archivos cacheados. Cold
+    cache, primer ticker llena el cache; los siguientes tickers son
+    instantáneos para los mismos períodos.
+
+    Args:
+        tickers: lista de tickers BVL (ej. ``["ALICORC1", "BACKUSI1", "FERREYC1"]``).
+        desde, hasta: rango de años fiscales (inclusive).
+        tipo: ``"consolidado"`` (default) o ``"individual"``. Cascada automática
+            por ticker.
+        periodicidad: ``"anual"`` (default) o ``"trimestral"``.
+        cache_dir: directorio de cache. None = user cache dir del SO.
+        max_workers: número máximo de descargas SOAP en paralelo (1-10).
+
+    Returns:
+        dict ``{ticker: result | None}`` donde ``result`` tiene el mismo
+        shape que ``fetch_estados_financieros`` (``{"periods": [...], "info": {...}}``).
+        Si un ticker no está en el catálogo o no tiene datos, su valor es
+        ``None`` (no levanta excepción para no abortar la consulta de los demás).
+
+    Ejemplo::
+
+        from smv_peru import fetch_multi, to_excel
+        sectorial = fetch_multi(
+            ["CPACASC1", "UNACEMC1", "YURAC1"],   # cementeras del catálogo
+            desde=2019, hasta=2024,
+        )
+        to_excel(sectorial, "cementeras_2019_2024.xlsx")
+    """
+    if not tickers:
+        return {}
+    if max_workers < 1 or max_workers > MAX_WORKERS_LIMIT:
+        raise ValueError(
+            f"max_workers debe estar entre 1 y {MAX_WORKERS_LIMIT}, recibido: {max_workers}"
+        )
+
+    output: dict[str, dict | None] = {}
+    for ticker in tickers:
+        try:
+            output[ticker] = fetch_estados_financieros(
+                ticker, desde=desde, hasta=hasta,
+                tipo=tipo, periodicidad=periodicidad,
+                cache_dir=cache_dir, max_workers=max_workers,
+            )
+        except Exception as e:
+            logger.warning(f"fetch_multi: error con {ticker}: {e}")
+            output[ticker] = None
+    return output
