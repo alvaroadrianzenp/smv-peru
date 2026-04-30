@@ -280,6 +280,75 @@ FIELDS_TO_CODES_2F: dict[str, str] = {
 CODIGOS_USADOS_2F: frozenset[str] = frozenset(FIELDS_TO_CODES_2F.values())
 
 
+# ---------------------------------------------------------------------------
+# Esquema 2F Individual (SBS): los EEFF Individuales de bancos en SMV usan un
+# formato distinto al Consolidado, más detallado y alineado a SBS. Los códigos
+# que difieren se mapean aquí. Si una empresa cae a Individual (por
+# `tipo='individual'` o por la cascada por-período), `_map_period_2f` detecta
+# el esquema automáticamente y usa estos overrides.
+# ---------------------------------------------------------------------------
+_2F_INDIVIDUAL_OVERRIDES: dict[str, str] = {
+    "loan_loss_provisions": "2F2306",  # vs 2F2304 en Consolidado
+    "pretax_income":        "2F1302",  # vs 2F2809
+    "eps":                  "2F2201",  # vs 2F2204
+    "eps_diluted":          "2F2202",  # vs 2F2206
+    "loans_change":         "3F0418",  # vs 3F0805
+    # `1F2401` es el total de "Adeudos y Obligaciones Financieras" sin separar
+    # por plazo; lo mapeamos a financial_debt_lt para preservar el monto total
+    # (financial_debt_st queda None — ver _2F_INDIVIDUAL_UNAVAILABLE).
+    "financial_debt_lt":    "1F2401",
+}
+
+# Campos cuya información no está separada en el esquema Individual SBS.
+# `loans_lt` queda None — el total de cartera ya está en loans_st (1F0111).
+_2F_INDIVIDUAL_UNAVAILABLE: frozenset[str] = frozenset({
+    "loans_lt", "financial_debt_st", "deposits_change",
+})
+
+# Campos compuestos: en Individual SBS se desagregan en varios códigos que
+# hay que sumar. Los signos vienen ya de SMV (2F2501 ya es negativo).
+_2F_INDIVIDUAL_COMPOSITES: dict[str, tuple[str, ...]] = {
+    "fee_income_net":     ("2F2402", "2F2501"),
+    "operating_expenses": ("2F2603", "2F2604", "2F2605", "2F0906"),
+}
+
+# Códigos extra usados por el esquema Individual (para que raw_accounts los
+# excluya correctamente cuando el período viene de Individual).
+_CODIGOS_USADOS_2F_INDIVIDUAL: frozenset[str] = frozenset(
+    list(_2F_INDIVIDUAL_OVERRIDES.values())
+    + [c for codes in _2F_INDIVIDUAL_COMPOSITES.values() for c in codes]
+)
+
+
+def _is_2f_individual_schema(pnl_rows: list[dict]) -> bool:
+    """Detecta si las filas vienen del esquema Individual SBS.
+
+    Marcadores exclusivos del esquema Individual SBS:
+    - `2F1302` ("RESULTADO DEL EJERCICIO ANTES DE IMPUESTO A LA RENTA")
+    - `2F2306` ("(-) Provisiones para créditos directos")
+
+    Ambos están confirmados como ausentes del esquema Consolidado NIIF.
+    Otros códigos (ej. `2F2201` para EPS básica) aparecen en ambos esquemas
+    y NO sirven como marcador.
+    """
+    markers = ("2F1302", "2F2306")
+    return any(any(r.get('Cuenta') == m for r in pnl_rows) for m in markers)
+
+
+def _resolve_amount_2f(field: str, rows: list[dict], individual: bool):
+    """Resuelve el monto de un campo 2F respetando el esquema detectado."""
+    if individual:
+        if field in _2F_INDIVIDUAL_UNAVAILABLE:
+            return None
+        if field in _2F_INDIVIDUAL_COMPOSITES:
+            vals = [_amount(rows, c) for c in _2F_INDIVIDUAL_COMPOSITES[field]]
+            non_none = [v for v in vals if v is not None]
+            return sum(non_none) if non_none else None
+        code = _2F_INDIVIDUAL_OVERRIDES.get(field) or FIELDS_TO_CODES_2F.get(field)
+        return _amount(rows, code) if code else None
+    return _amount(rows, FIELDS_TO_CODES_2F[field])
+
+
 # Alias de compatibilidad: FIELDS_TO_CODES apunta a 2D (esquema legacy default).
 FIELDS_TO_CODES = FIELDS_TO_CODES_2D
 CODIGOS_USADOS = CODIGOS_USADOS_2D
@@ -806,7 +875,13 @@ def _map_period_2d(rpj: str, pnl, bal, flow, fiscal_year: int,
 
 def _map_period_2f(rpj: str, pnl, bal, flow, fiscal_year: int,
                    quarter: int | None) -> dict | None:
-    """Esquema 2F (bancos): mapea cuentas SMV a campos amigables bancarios."""
+    """Esquema 2F (bancos): mapea cuentas SMV a campos amigables bancarios.
+
+    Detecta automáticamente si las filas vienen del esquema "Consolidado NIIF"
+    o del "Individual SBS". Algunos códigos difieren entre los dos esquemas
+    (ej. loan_loss_provisions: 2F2304 vs 2F2306) y otros no existen en
+    Individual (loans_lt, financial_debt_st, deposits_change → None).
+    """
     if not pnl or not bal:
         return None
     pnl_e = [r for r in pnl if r.get('RPJ') == rpj]
@@ -815,10 +890,20 @@ def _map_period_2f(rpj: str, pnl, bal, flow, fiscal_year: int,
     if not pnl_e or not bal_e:
         return None
 
+    is_individual = _is_2f_individual_schema(pnl_e)
+
     def amt(field: str, rows: list[dict]):
-        return _amount(rows, FIELDS_TO_CODES_2F[field])
+        return _resolve_amount_2f(field, rows, is_individual)
 
     def amt_prior(field: str, rows: list[dict]):
+        # Para promedios usamos Monto2 — solo sobre códigos directos, no
+        # composites (los composites son sumas y SMV las publica ya armadas
+        # como Monto1; Monto2 puede no ser confiable para sumas multi-código).
+        if is_individual:
+            if field in _2F_INDIVIDUAL_UNAVAILABLE or field in _2F_INDIVIDUAL_COMPOSITES:
+                return None
+            code = _2F_INDIVIDUAL_OVERRIDES.get(field) or FIELDS_TO_CODES_2F.get(field)
+            return _amount_prior(rows, code) if code else None
         return _amount_prior(rows, FIELDS_TO_CODES_2F[field])
 
     interest_income = amt("interest_income", pnl_e)
@@ -957,11 +1042,13 @@ def _map_period_2f(rpj: str, pnl, bal, flow, fiscal_year: int,
     period["deposits_yoy"] = _yoy(period["deposits"], deposits_prior)
     period["equity_yoy"] = _yoy(equity, equity_prior)
 
-    # raw_accounts
+    # raw_accounts: si el esquema es Individual SBS, también excluimos los
+    # códigos extra usados por ese esquema para no duplicar información.
+    used = CODIGOS_USADOS_2F | _CODIGOS_USADOS_2F_INDIVIDUAL if is_individual else CODIGOS_USADOS_2F
     raw: dict[str, dict] = {}
-    raw.update(_extract_raw_accounts(pnl_e, CODIGOS_USADOS_2F))
-    raw.update(_extract_raw_accounts(bal_e, CODIGOS_USADOS_2F))
-    raw.update(_extract_raw_accounts(flow_e, CODIGOS_USADOS_2F))
+    raw.update(_extract_raw_accounts(pnl_e, used))
+    raw.update(_extract_raw_accounts(bal_e, used))
+    raw.update(_extract_raw_accounts(flow_e, used))
     period["raw_accounts"] = raw
 
     return period
