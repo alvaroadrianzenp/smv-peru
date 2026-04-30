@@ -422,6 +422,13 @@ def _make_progress_writer(total: int, label: str):
     return tick
 
 
+def _has_rpj_data(rows: list[dict] | None, rpj: str) -> bool:
+    """True si la lista contiene al menos una fila con el RPJ dado."""
+    if not rows:
+        return False
+    return any(r.get('RPJ') == rpj for r in rows)
+
+
 def _detect_currency(rows: list[dict]) -> str | None:
     """Detecta moneda desde el campo 'Moneda' de la primera fila.
 
@@ -1320,26 +1327,62 @@ def fetch_eeff(
             tick()
 
     # ---- Fase 3: procesar usando resultados ya descargados ----------------
+    # Cascada por período (no por ticker entero): si Consolidado tiene PNL/Bal
+    # incompletos para este RPJ en un año específico, intentamos Individual
+    # solo para ese período. Esto resuelve casos como BBVA 2022, donde SMV
+    # publicó PNL+Flow Consolidado pero NO Balance Consolidado, mientras que
+    # Individual está completo (gap conocido del cargador SMV — el documento
+    # consolidado oficial sí existe).
     periods_data = []
     for y in range(desde, hasta + 1):
-        cf_is_ytd = False
+        cf_is_ytd_c = False
+        cf_is_ytd_i: bool | None = None  # lazy: solo se calcula si hay fallback
         if periodicidad == "trimestral":
-            cf_is_ytd = _check_cf_ytd_from_results(results, rpj, y, tipo_code)
+            cf_is_ytd_c = _check_cf_ytd_from_results(results, rpj, y, tipo_code)
 
         for p in periodos:
             pnl = results.get((OP_PNL, y, p, tipo_code))
             bal = results.get((OP_BAL, y, p, tipo_code))
             flow = results.get((OP_FLOW, y, p, tipo_code))
+            used_tipo = tipo  # "consolidado" o "individual" según el arg
 
-            if periodicidad == "trimestral" and p in ("2", "3", "4") and cf_is_ytd and flow is not None:
-                prev_p = str(int(p) - 1)
-                flow_prev = results.get((OP_FLOW, y, prev_p, tipo_code))
-                if flow_prev is not None:
-                    flow = _subtract_rows(flow, flow_prev)
+            # Detectar incompletitud por RPJ y caer back a Individual si aplica
+            consolidated_ok = _has_rpj_data(pnl, rpj) and _has_rpj_data(bal, rpj)
+            if tipo_code == "C" and not consolidated_ok:
+                ind_pnl = _call_smv(OP_PNL, y, p, "I", cache_dir)
+                ind_bal = _call_smv(OP_BAL, y, p, "I", cache_dir)
+                ind_flow = _call_smv(OP_FLOW, y, p, "I", cache_dir)
+                if _has_rpj_data(ind_pnl, rpj) and _has_rpj_data(ind_bal, rpj):
+                    pnl, bal, flow = ind_pnl, ind_bal, ind_flow
+                    used_tipo = "individual"
+                    label_q = f"Q{p}" if p != "A" else ""
+                    logger.info(
+                        f"smv-peru: {ticker} {y}{label_q} incompleto en "
+                        f"Consolidado; usando Individual como fallback"
+                    )
+                    # Cuando el origen es Individual, recalcular YTD sobre
+                    # datos Individuales del mismo año.
+                    if periodicidad == "trimestral" and p in ("2", "3", "4"):
+                        if cf_is_ytd_i is None:
+                            ind_q4 = _call_smv(OP_FLOW, y, "4", "I", cache_dir)
+                            ind_anual = _call_smv(OP_FLOW, y, "A", "I", cache_dir)
+                            cf_is_ytd_i = _is_ytd(ind_q4 or [], ind_anual or [], rpj)
+                        if cf_is_ytd_i and flow is not None:
+                            flow_prev = _call_smv(OP_FLOW, y, str(int(p) - 1), "I", cache_dir)
+                            if flow_prev is not None:
+                                flow = _subtract_rows(flow, flow_prev)
+            else:
+                # Camino normal: YTD detection sobre Consolidado
+                if periodicidad == "trimestral" and p in ("2", "3", "4") and cf_is_ytd_c and flow is not None:
+                    prev_p = str(int(p) - 1)
+                    flow_prev = results.get((OP_FLOW, y, prev_p, tipo_code))
+                    if flow_prev is not None:
+                        flow = _subtract_rows(flow, flow_prev)
 
             quarter = None if p == "A" else int(p)
             yd = mapper(rpj, pnl, bal, flow, y, quarter)
             if yd is not None:
+                yd["tipo"] = used_tipo
                 periods_data.append(yd)
 
     # Cascada: si no obtuvimos nada con Consolidado, probar Individual
