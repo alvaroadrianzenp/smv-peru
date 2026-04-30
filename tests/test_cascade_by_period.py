@@ -1,9 +1,14 @@
-"""Tests para la cascada Consolidado→Individual por período.
+"""Tests para la cascada de fallbacks por período.
 
-Cuando SMV publica P&L y Flow Consolidados pero NO Balance Consolidado para
-un RPJ en un año específico (caso conocido: BBVA Perú 2022), la librería cae
-back a Individual solo para ese período. El resto de períodos del rango
-mantienen su origen Consolidado. Cada período expone `tipo` con su origen real.
+Orden de fallbacks cuando Consolidado anual está incompleto para un RPJ:
+  1) Si solo falta el Balance Consolidado y existe Balance Q4 Consolidado,
+     usa Q4 como sustituto (stock idéntico al cierre anual). Mantiene la
+     consistencia "Consolidado" del reporte. Caso real: BBVA 2022.
+  2) Si lo anterior no aplica o también falla, cascada a Individual completo
+     del mismo período. Caso real hipotético / casos edge.
+
+Cada período expone `tipo` con su origen real ("consolidado" o "individual")
+y, opcionalmente, `balance_source="Q4_consolidado"` cuando hubo sustitución.
 """
 import json
 from pathlib import Path
@@ -49,39 +54,54 @@ def _write_cache(cache_dir, op, year, tipo, period, rows):
     path.write_text(json.dumps(rows))
 
 
-def test_bbva_2022_consolidado_sin_balance_cae_a_individual(tmp_path):
-    """Reproduce el bug real: PNL+Flow C presentes, Balance C vacío para BBVA;
-    Individual completo. Esperamos que el período se recupere desde Individual
-    y que `period["tipo"] == "individual"`. Otros años (con Consolidado completo)
-    deben mantener `tipo == "consolidado"`."""
-    rpj = "B80004"  # BBVA Perú según catálogo
+def test_bbva_2022_balance_anual_ausente_usa_q4_consolidado(tmp_path):
+    """Caso real BBVA 2022: PNL+Flow C anuales OK, Balance C anual vacío,
+    pero Balance C Q4 SÍ existe. La librería usa Q4 C como sustituto y
+    mantiene `tipo='consolidado'` con marca `balance_source='Q4_consolidado'`.
+    """
+    rpj = "B80004"
 
-    # 2021 — Consolidado completo (PNL, BAL, FLOW)
-    _write_cache(tmp_path, "GanciaPerdida", 2021, "C", "A", [
-        _row(rpj, "2F0101", 1_000_000),  # interest_income
-        _row(rpj, "2F2301", 500_000),    # net_interest_income
-    ])
-    _write_cache(tmp_path, "BalanceGeneral", 2021, "C", "A", [
-        _row(rpj, "1F3306", 5_000_000),  # equity
-    ])
-    _write_cache(tmp_path, "FlujoEfectivo", 2021, "C", "A", [
-        _row(rpj, "3F0501", 200_000),  # operating_cf
-    ])
-
-    # 2022 — Consolidado INCOMPLETO: PNL y FLOW poblados, BAL VACÍO
+    # 2022 anual: PNL y Flow C OK, Balance C anual vacío
     _write_cache(tmp_path, "GanciaPerdida", 2022, "C", "A", [
-        _row(rpj, "2F0101", 1_100_000),
-        _row(rpj, "2F2301", 550_000),
+        _row(rpj, "2F0101", 1_100_000), _row(rpj, "2F2301", 550_000),
     ])
     _write_cache(tmp_path, "BalanceGeneral", 2022, "C", "A", [])  # ← gap SMV
     _write_cache(tmp_path, "FlujoEfectivo", 2022, "C", "A", [
         _row(rpj, "3F0501", 220_000),
     ])
+    # Balance C Q4 SÍ existe (esto es lo que SMV publica para BBVA 2022)
+    _write_cache(tmp_path, "BalanceGeneral", 2022, "C", "4", [
+        _row(rpj, "1F3306", 11_253_374),  # equity = patrimonio cierre Q4
+    ])
 
-    # 2022 — Individual COMPLETO (los tres). Esto es lo que SMV sí publica.
+    result = fetch_eeff("BBVAC1", desde=2022, hasta=2022, periodicidad="anual",
+                       cache_dir=tmp_path)
+    assert result is not None
+    p = result["periods"][0]
+    assert p["fiscal_year"] == 2022
+    assert p["tipo"] == "consolidado"  # se mantuvo, no cayó a Individual
+    assert p["balance_source"] == "Q4_consolidado"
+    assert p["equity"] == 11_253_374
+
+
+def test_si_q4_tampoco_existe_cae_a_individual(tmp_path):
+    """Si Balance C anual y Balance C Q4 ambos están vacíos, se intenta
+    Individual completo (segundo fallback)."""
+    rpj = "B80004"
+
+    _write_cache(tmp_path, "GanciaPerdida", 2022, "C", "A", [
+        _row(rpj, "2F0101", 1_100_000), _row(rpj, "2F2301", 550_000),
+    ])
+    _write_cache(tmp_path, "BalanceGeneral", 2022, "C", "A", [])
+    _write_cache(tmp_path, "FlujoEfectivo", 2022, "C", "A", [
+        _row(rpj, "3F0501", 220_000),
+    ])
+    # Q4 también vacío
+    _write_cache(tmp_path, "BalanceGeneral", 2022, "C", "4", [])
+
+    # Individual COMPLETO
     _write_cache(tmp_path, "GanciaPerdida", 2022, "I", "A", [
-        _row(rpj, "2F0101", 1_050_000),
-        _row(rpj, "2F2301", 525_000),
+        _row(rpj, "2F0101", 1_050_000), _row(rpj, "2F2301", 525_000),
     ])
     _write_cache(tmp_path, "BalanceGeneral", 2022, "I", "A", [
         _row(rpj, "1F3306", 5_300_000),
@@ -90,21 +110,13 @@ def test_bbva_2022_consolidado_sin_balance_cae_a_individual(tmp_path):
         _row(rpj, "3F0501", 210_000),
     ])
 
-    # Pedimos 2021-2022 anuales en Consolidado
-    result = fetch_eeff("BBVAC1", desde=2021, hasta=2022, periodicidad="anual",
+    result = fetch_eeff("BBVAC1", desde=2022, hasta=2022, periodicidad="anual",
                        cache_dir=tmp_path)
     assert result is not None
-    by_year = {p["fiscal_year"]: p for p in result["periods"]}
-
-    # 2021: Consolidado normal
-    assert 2021 in by_year
-    assert by_year[2021]["tipo"] == "consolidado"
-    assert by_year[2021]["equity"] == 5_000_000
-
-    # 2022: rescatado vía Individual
-    assert 2022 in by_year, "2022 debería recuperarse via cascada por período"
-    assert by_year[2022]["tipo"] == "individual"
-    assert by_year[2022]["equity"] == 5_300_000  # valor de Individual, no Consolidado
+    p = result["periods"][0]
+    assert p["tipo"] == "individual"
+    assert "balance_source" not in p  # no aplica cuando es Individual
+    assert p["equity"] == 5_300_000
 
 
 def test_consolidado_completo_marca_tipo_consolidado(tmp_path):

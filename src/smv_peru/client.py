@@ -1346,8 +1346,30 @@ def fetch_eeff(
             flow = results.get((OP_FLOW, y, p, tipo_code))
             used_tipo = tipo  # "consolidado" o "individual" según el arg
 
-            # Detectar incompletitud por RPJ y caer back a Individual si aplica
+            # Detectar incompletitud por RPJ y aplicar cascada en orden:
+            #   1) Si solo falta Balance C anual y existe Balance Q4 C, usar
+            #      Q4 como sustituto. El balance es stock: el cierre del Q4
+            #      equivale matemáticamente al cierre anual (validado contra
+            #      múltiples empresas: coincide al peso). Mantiene la
+            #      consistencia "Consolidado" del reporte.
+            #   2) Si lo anterior no aplica o falla, caer back a Individual
+            #      completo del mismo período.
             consolidated_ok = _has_rpj_data(pnl, rpj) and _has_rpj_data(bal, rpj)
+            balance_substituted_from_q4 = False
+
+            if (tipo_code == "C" and not consolidated_ok and p == "A"
+                    and _has_rpj_data(pnl, rpj) and not _has_rpj_data(bal, rpj)):
+                bal_q4 = _call_smv(OP_BAL, y, "4", "C", cache_dir)
+                if _has_rpj_data(bal_q4, rpj):
+                    bal = bal_q4
+                    consolidated_ok = True
+                    balance_substituted_from_q4 = True
+                    logger.info(
+                        f"smv-peru: {ticker} {y} Balance C anual ausente en "
+                        f"SMV; usando Balance C Q4 como sustituto (stock "
+                        f"idéntico al cierre anual)"
+                    )
+
             if tipo_code == "C" and not consolidated_ok:
                 ind_pnl = _call_smv(OP_PNL, y, p, "I", cache_dir)
                 ind_bal = _call_smv(OP_BAL, y, p, "I", cache_dir)
@@ -1383,6 +1405,8 @@ def fetch_eeff(
             yd = mapper(rpj, pnl, bal, flow, y, quarter)
             if yd is not None:
                 yd["tipo"] = used_tipo
+                if balance_substituted_from_q4:
+                    yd["balance_source"] = "Q4_consolidado"
                 periods_data.append(yd)
 
     # Cascada: si no obtuvimos nada con Consolidado, probar Individual
