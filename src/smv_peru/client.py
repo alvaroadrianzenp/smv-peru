@@ -182,6 +182,22 @@ FIELDS_TO_CODES_2D: dict[str, str] = {
     # analista puede usar set_dna() para proveer D&A externo (ej. desde
     # notas a EEFF auditados) y la librería recalcula automáticamente.
     "dna":                 "3D0602",  # Depreciación, Amortización y Agotamiento
+
+    # Estado de Flujos de Efectivo (método INDIRECTO).
+    # SMV no expone DescripcionCuenta para estos códigos vía web service; los
+    # nombres amigables siguen la nomenclatura NIC 7 estándar y fueron
+    # validados conceptualmente contra el EEFF auditado de Cementos Pacasmayo
+    # (publicado en SMV). Para empresas con método directo, todos estos
+    # campos quedan None.
+    "ni_before_tax_cf":          "3D05ST",  # Utilidad antes del impuesto a la renta (punto de partida)
+    "fx_adjustment_cf":          "3D0605",  # Diferencia en cambio (ajuste no-cash)
+    "ppe_disposal_cf":           "3D0610",  # (Ganancia)/pérdida por venta de propiedades, planta y equipo
+    "other_non_cash_cf":         "3D0620",  # Otras partidas que no generan flujos operativos
+    "change_in_receivables":     "3D0801",  # Variación en cuentas por cobrar comerciales y diversas
+    "change_in_other_op_assets": "3D0803",  # Variación en otros activos operativos (incl. gastos pagados por adelantado)
+    "change_in_inventory":       "3D0804",  # Variación en inventarios
+    "change_in_payables":        "3D0806",  # Variación en cuentas por pagar comerciales y diversas
+    "change_in_other_op_liab":   "3D0809",  # Variación en otros pasivos operativos
 }
 
 CODIGOS_USADOS_2D: frozenset[str] = frozenset(FIELDS_TO_CODES_2D.values())
@@ -392,6 +408,23 @@ def _detect_currency(rows: list[dict]) -> str | None:
     return raw  # devolver crudo si no clasificamos
 
 
+def _detect_cf_method(rows: list[dict]) -> str | None:
+    """Lee MetodoFlujoEfectivo de la primera fila y normaliza a 'directo'/'indirecto'.
+
+    SMV publica el método como texto en cada fila ('Método Directo' / 'Método
+    Indirecto'). El encoding a veces aparece sin tilde ('M todo Directo'),
+    así que la heurística busca la palabra clave 'irect'/'ndirect'.
+    """
+    if not rows:
+        return None
+    raw = (rows[0].get('MetodoFlujoEfectivo') or '').strip()
+    if 'ndirect' in raw.lower():
+        return "indirecto"
+    if 'irect' in raw.lower():  # 'directo' o 'Directo'
+        return "directo"
+    return None
+
+
 def _amount(rows: list[dict], cuenta: str, monto_field: str = "Monto1"):
     """Lee el monto de una cuenta. monto_field='Monto1' (actual) o 'Monto2' (anterior)."""
     for r in rows:
@@ -587,8 +620,18 @@ def _map_period_2d(rpj: str, pnl, bal, flow, fiscal_year: int,
               "dividends_received", "investing_cf",
               "dividends_paid_fin", "interest_paid_fin", "debt_issued",
               "equity_issued", "debt_repaid", "financing_cf",
-              "end_cash", "dna"):
+              "end_cash", "dna",
+              "ni_before_tax_cf", "fx_adjustment_cf", "ppe_disposal_cf",
+              "other_non_cash_cf", "change_in_receivables",
+              "change_in_other_op_assets", "change_in_inventory",
+              "change_in_payables", "change_in_other_op_liab"):
         period[f] = amt(f, flow_e)
+
+    # Método de presentación del CF (directo vs indirecto). SMV lo expone
+    # explícitamente en el campo MetodoFlujoEfectivo de cada fila. Las
+    # empresas con método directo dejan vacíos los 9 campos *_cf y
+    # change_in_* del bloque indirecto, y viceversa.
+    period["cf_method"] = _detect_cf_method(flow_e)
 
     # --- Stocks del período anterior (Monto2) para promedios y YoY ---------
     equity_prior = amt_prior("equity", bal_e)
@@ -774,6 +817,7 @@ def _map_period_2f(rpj: str, pnl, bal, flow, fiscal_year: int,
     for f in ("dna", "operating_cf", "investing_cf", "financing_cf",
               "deposits_change", "loans_change", "dividends_paid_fin", "end_cash"):
         period[f] = amt(f, flow_e)
+    period["cf_method"] = _detect_cf_method(flow_e)
 
     # --- Stocks del período anterior (Monto2) ------------------------------
     equity_prior = amt_prior("equity", bal_e)

@@ -33,10 +33,28 @@ from .empresas import EMPRESAS
 
 # ---------------------------------------------------------------------------
 # Esquema de filas: lista de secciones, cada una con sus campos.
-# Cada campo: (key del dict de período, label legible, tipo de formato)
+# Cada item de la lista interna puede ser:
+#   * Campo:    (field_key, label, fmt)        — 3-tuple
+#   * Subgrupo: (subgroup_label, "subheader")  — 2-tuple, encabezado intermedio
 # Tipos: "money" (separador miles), "pct" (porcentaje), "ratio" (Nx),
 #        "decimal" (2 decimales sin sufijo)
 # ---------------------------------------------------------------------------
+
+# Campos del CF que solo existen para el método directo o el indirecto.
+# Se ocultan en el Excel cuando la empresa usa el método contrario.
+_DIRECT_CF_FIELDS = frozenset({
+    "cash_from_customers", "interest_received_op",
+    "cash_to_suppliers", "cash_to_employees",
+})
+_INDIRECT_CF_FIELDS = frozenset({
+    "dna",
+    "fx_adjustment_cf", "ppe_disposal_cf", "other_non_cash_cf",
+    "change_in_receivables", "change_in_other_op_assets",
+    "change_in_inventory", "change_in_payables", "change_in_other_op_liab",
+})
+# `ni_before_tax_cf` (3D05ST) NO se filtra: SMV lo publica como subtotal
+# automático también en empresas con método directo, no es exclusivo del
+# bloque indirecto.
 
 SECTIONS_2D: list[tuple[str, list[tuple[str, str, str]]]] = [
     ("ESTADO DE RESULTADOS", [
@@ -95,25 +113,40 @@ SECTIONS_2D: list[tuple[str, list[tuple[str, str, str]]]] = [
         ("equity", "Total equity", "money"),
     ]),
     ("CASH FLOW", [
-        ("dna", "D&A (only for indirect-CF firms)", "money"),
+        ("Operación — Método directo", "subheader"),
         ("cash_from_customers", "Cash from customers", "money"),
         ("interest_received_op", "Interest received (op)", "money"),
         ("cash_to_suppliers", "Cash to suppliers", "money"),
         ("cash_to_employees", "Cash to employees", "money"),
+        ("Operación — Método indirecto", "subheader"),
+        ("dna", "D&A", "money"),
+        ("fx_adjustment_cf", "FX adjustment (non-cash)", "money"),
+        ("ppe_disposal_cf", "PP&E disposal (gain/loss, non-cash)", "money"),
+        ("other_non_cash_cf", "Other non-cash items", "money"),
+        ("change_in_receivables", "Δ Receivables", "money"),
+        ("change_in_other_op_assets", "Δ Other operating assets", "money"),
+        ("change_in_inventory", "Δ Inventory", "money"),
+        ("change_in_payables", "Δ Payables", "money"),
+        ("change_in_other_op_liab", "Δ Other operating liabilities", "money"),
+        ("Operación — Subtotales", "subheader"),
+        ("ni_before_tax_cf", "Pretax income (CF starting point)", "money"),
         ("interest_paid", "Interest paid (total)", "money"),
         ("taxes_paid", "Taxes paid", "money"),
         ("operating_cf", "Operating cash flow (subtotal)", "money"),
+        ("Inversión", "subheader"),
         ("ppe_proceeds", "PP&E proceeds", "money"),
         ("capex_ppe", "Capex PP&E", "money"),
         ("capex_intangibles", "Capex intangibles", "money"),
         ("capex_total", "Capex total (absolute)", "money"),
         ("dividends_received", "Dividends received (inv)", "money"),
         ("investing_cf", "Investing cash flow (subtotal)", "money"),
+        ("Financiamiento", "subheader"),
         ("debt_issued", "Debt issued", "money"),
         ("debt_repaid", "Debt repaid", "money"),
         ("equity_issued", "Equity issued", "money"),
         ("dividends_paid", "Dividends paid (absolute)", "money"),
         ("financing_cf", "Financing cash flow (subtotal)", "money"),
+        ("Resultado", "subheader"),
         ("fcf", "Free cash flow", "money"),
         ("end_cash", "End-of-period cash", "money"),
     ]),
@@ -193,13 +226,17 @@ SECTIONS_2F: list[tuple[str, list[tuple[str, str, str]]]] = [
         ("equity", "Total equity", "money"),
     ]),
     ("CASH FLOW", [
+        ("Operación", "subheader"),
         ("dna", "Depreciation & amortization", "money"),
-        ("operating_cf", "Operating cash flow", "money"),
-        ("investing_cf", "Investing cash flow", "money"),
-        ("financing_cf", "Financing cash flow", "money"),
-        ("deposits_change", "Deposits change", "money"),
-        ("loans_change", "Loans change", "money"),
+        ("deposits_change", "Δ Deposits", "money"),
+        ("loans_change", "Δ Loans", "money"),
+        ("operating_cf", "Operating cash flow (subtotal)", "money"),
+        ("Inversión", "subheader"),
+        ("investing_cf", "Investing cash flow (subtotal)", "money"),
+        ("Financiamiento", "subheader"),
         ("dividends_paid", "Dividends paid (absolute)", "money"),
+        ("financing_cf", "Financing cash flow (subtotal)", "money"),
+        ("Resultado", "subheader"),
         ("end_cash", "End-of-period cash", "money"),
     ]),
     ("RATIOS BANCARIOS", [
@@ -243,14 +280,26 @@ def _format_for(fmt: str) -> str | None:
 
 
 def _populate_eeff_sheet(ws, periods: list[dict], ticker: str | None) -> None:
-    """Puebla una hoja con el layout de EEFF: header + secciones + campos."""
+    """Puebla una hoja con el layout de EEFF: header + secciones + campos.
+
+    Las cuentas amigables del CF se muestran condicionalmente según el método
+    que la empresa usa: si todos los períodos reportan método directo, las
+    cuentas del bloque indirecto se omiten (y viceversa). Si hay mixtura
+    (raro) o método desconocido, se muestran ambos bloques.
+    """
     schema = periods[0].get("schema", "2D")
     sections = SECTIONS_2D if schema == "2D" else SECTIONS_2F
 
+    methods = {p.get("cf_method") for p in periods if p.get("cf_method")}
+    show_direct = (not methods) or ("directo" in methods)
+    show_indirect = (not methods) or ("indirecto" in methods)
+
     title_font = Font(bold=True, size=14)
     bold = Font(bold=True)
+    subheader_font = Font(bold=True, italic=True)
     header_fill = PatternFill(start_color="DDDDDD", end_color="DDDDDD", fill_type="solid")
     section_fill = PatternFill(start_color="C0C0C0", end_color="C0C0C0", fill_type="solid")
+    subheader_fill = PatternFill(start_color="EEEEEE", end_color="EEEEEE", fill_type="solid")
     right_align = Alignment(horizontal="right")
 
     nombre_emp = ""
@@ -282,7 +331,7 @@ def _populate_eeff_sheet(ws, periods: list[dict], ticker: str | None) -> None:
         cell.alignment = right_align
 
     current_row = HEADER_ROW + 1
-    for section_name, fields in sections:
+    for section_name, items in sections:
         c = ws.cell(row=current_row, column=LABEL_COL, value=section_name)
         c.font = bold
         c.fill = section_fill
@@ -290,8 +339,31 @@ def _populate_eeff_sheet(ws, periods: list[dict], ticker: str | None) -> None:
             ws.cell(row=current_row, column=col).fill = section_fill
         current_row += 1
 
-        for field_key, label, fmt in fields:
-            ws.cell(row=current_row, column=LABEL_COL, value="  " + label)
+        for item in items:
+            # Subgrupo (label + "subheader"): encabezado intermedio en cursiva.
+            if len(item) == 2 and item[1] == "subheader":
+                subheader_label = item[0]
+                # Ocultar el subgrupo "Operación — Método directo/indirecto"
+                # si la empresa no usa ese método.
+                if subheader_label.startswith("Operación — Método directo") and not show_direct:
+                    continue
+                if subheader_label.startswith("Operación — Método indirecto") and not show_indirect:
+                    continue
+                cell = ws.cell(row=current_row, column=LABEL_COL, value="  " + subheader_label)
+                cell.font = subheader_font
+                cell.fill = subheader_fill
+                for col in range(FIRST_DATA_COL, FIRST_DATA_COL + len(periods)):
+                    ws.cell(row=current_row, column=col).fill = subheader_fill
+                current_row += 1
+                continue
+
+            # Campo (3-tuple).
+            field_key, label, fmt = item
+            if field_key in _DIRECT_CF_FIELDS and not show_direct:
+                continue
+            if field_key in _INDIRECT_CF_FIELDS and not show_indirect:
+                continue
+            ws.cell(row=current_row, column=LABEL_COL, value="    " + label)
             num_fmt = _format_for(fmt)
             for i, p in enumerate(periods):
                 value = p.get(field_key)

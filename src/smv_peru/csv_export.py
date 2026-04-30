@@ -20,7 +20,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .empresas import EMPRESAS
-from .excel import SECTIONS_2D, SECTIONS_2F, _period_label
+from .excel import (
+    SECTIONS_2D, SECTIONS_2F,
+    _DIRECT_CF_FIELDS, _INDIRECT_CF_FIELDS,
+    _period_label,
+)
 
 
 def _csv_value(value, fmt: str):
@@ -63,10 +67,28 @@ def _write_single_csv(writer, periods: list[dict], ticker: str | None) -> None:
     period_labels = [_period_label(p) for p in periods]
     writer.writerow([""] + period_labels)
 
+    # Detección de método CF para filtrado condicional
+    methods = {p.get("cf_method") for p in periods if p.get("cf_method")}
+    show_direct = (not methods) or ("directo" in methods)
+    show_indirect = (not methods) or ("indirecto" in methods)
+
     # Cuerpo
-    for section_name, fields in sections:
+    for section_name, items in sections:
         writer.writerow([f"=== {section_name} ==="])
-        for field_key, label, fmt in fields:
+        for item in items:
+            if len(item) == 2 and item[1] == "subheader":
+                subheader_label = item[0]
+                if subheader_label.startswith("Operación — Método directo") and not show_direct:
+                    continue
+                if subheader_label.startswith("Operación — Método indirecto") and not show_indirect:
+                    continue
+                writer.writerow([f"-- {subheader_label} --"])
+                continue
+            field_key, label, fmt = item
+            if field_key in _DIRECT_CF_FIELDS and not show_direct:
+                continue
+            if field_key in _INDIRECT_CF_FIELDS and not show_indirect:
+                continue
             row = [label]
             for p in periods:
                 row.append(_csv_value(p.get(field_key), fmt))
