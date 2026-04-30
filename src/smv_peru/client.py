@@ -56,6 +56,7 @@ import logging
 import os
 import re
 import sys
+import threading
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -386,6 +387,39 @@ def _call_smv(operacion: str, ejercicio: int, periodo: str, tipo: str,
         json.dump(data, f)
     logger.info(f"SMV {operacion} {ejercicio} {tipo} P={periodo}: {len(data)} filas, cacheado (gzip)")
     return data
+
+
+def _make_progress_writer(total: int, label: str):
+    """Devuelve una función `tick()` que avanza una barra de progreso a stderr.
+
+    Diseño minimalista (sin dependencias externas):
+    - Si stderr no es TTY (ej. salida redirigida o CI), devuelve un no-op para
+      no contaminar logs.
+    - Si total < 2, también no-op (no aporta para una sola llamada).
+    - Thread-safe: el contador se protege con un Lock para soportar el
+      ThreadPoolExecutor de las descargas paralelas.
+
+    Output: ``\\r<label> [████░░░░] 12/24`` actualizado en sitio. Al llegar
+    al total, agrega un \\n para liberar la línea.
+    """
+    if total < 2 or not sys.stderr.isatty():
+        return lambda: None
+
+    state = {"done": 0}
+    lock = threading.Lock()
+    width = 24
+
+    def tick():
+        with lock:
+            state["done"] += 1
+            n = state["done"]
+        filled = int(width * n / total)
+        bar = "█" * filled + "·" * (width - filled)
+        end = "\n" if n >= total else ""
+        sys.stderr.write(f"\r{label} [{bar}] {n}/{total}{end}")
+        sys.stderr.flush()
+
+    return tick
 
 
 def _detect_currency(rows: list[dict]) -> str | None:
@@ -1260,6 +1294,9 @@ def fetch_eeff(
             f"{cached_count} en cache, {len(calls_needed) - cached_count} a descargar"
         )
 
+    progress_label = f"  {ticker} {desde}-{hasta} {periodicidad}"
+    tick = _make_progress_writer(len(calls_needed), progress_label)
+
     results: dict[tuple[str, int, str, str], list[dict] | None] = {}
     if max_workers > 1 and len(calls_needed) > 1:
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1276,9 +1313,11 @@ def fetch_eeff(
                 except Exception as e:
                     logger.warning(f"Llamada SOAP falló para {key}: {e}")
                     results[key] = None
+                tick()
     else:
         for (op, year, period, t) in calls_needed:
             results[(op, year, period, t)] = _call_smv(op, year, period, t, cache_dir)
+            tick()
 
     # ---- Fase 3: procesar usando resultados ya descargados ----------------
     periods_data = []
