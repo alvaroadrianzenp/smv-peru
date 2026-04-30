@@ -256,10 +256,12 @@ FIELDS_TO_CODES_2F: dict[str, str] = {
     # Para el "NII puro" (solo margen financiero del negocio bancario core),
     # ver el campo derivado `nii_pure` que la librería expone.
     "loan_loss_provisions": "2F2304",  # Provisión para créditos (negativo)
+    "nii_after_provisions": "2F2401",  # Margen Financiero Neto (NII − LLP)
     "fee_income_net":      "2F2406",  # Comisiones (netas)
     "trading_income":      "2F2506",  # Resultado por operaciones financieras (ROF)
     "operating_expenses":  "2F2602",  # Gastos de administración (negativo)
     "operating_income":    "2F2801",  # Resultado de operación
+    "non_op_items":        "2F2802",  # Otros ingresos y gastos (no operativos)
     "pretax_income":       "2F2809",  # Resultado antes de impuestos
     "income_tax":          "2F1403",  # Gasto por impuesto a las ganancias (negativo)
     "net_income":          "2F1901",  # Resultado neto del ejercicio
@@ -297,6 +299,11 @@ _2F_INDIVIDUAL_OVERRIDES: dict[str, str] = {
     # por plazo; lo mapeamos a financial_debt_lt para preservar el monto total
     # (financial_debt_st queda None — ver _2F_INDIVIDUAL_UNAVAILABLE).
     "financial_debt_lt":    "1F2401",
+    # Subtotales del P&L bancario que solo expone el esquema Individual SBS
+    # (no existen en Consolidado NIIF). En Consolidado quedan None.
+    "op_revenue_after_fees":      "2F2505",  # Margen neto de servicios
+    "op_revenue_total":           "2F2601",  # Margen operacional (incl. ROF)
+    "op_income_pre_op_provisions": "2F2701",  # Margen operacional neto
 }
 
 # Campos cuya información no está separada en el esquema Individual SBS.
@@ -336,7 +343,12 @@ def _is_2f_individual_schema(pnl_rows: list[dict]) -> bool:
 
 
 def _resolve_amount_2f(field: str, rows: list[dict], individual: bool):
-    """Resuelve el monto de un campo 2F respetando el esquema detectado."""
+    """Resuelve el monto de un campo 2F respetando el esquema detectado.
+
+    En Consolidado, los campos que existen solo en Individual SBS (ej.
+    op_revenue_total = 2F2601) devuelven None — no hay código equivalente
+    en el esquema NIIF Consolidado.
+    """
     if individual:
         if field in _2F_INDIVIDUAL_UNAVAILABLE:
             return None
@@ -346,7 +358,8 @@ def _resolve_amount_2f(field: str, rows: list[dict], individual: bool):
             return sum(non_none) if non_none else None
         code = _2F_INDIVIDUAL_OVERRIDES.get(field) or FIELDS_TO_CODES_2F.get(field)
         return _amount(rows, code) if code else None
-    return _amount(rows, FIELDS_TO_CODES_2F[field])
+    code = FIELDS_TO_CODES_2F.get(field)
+    return _amount(rows, code) if code else None
 
 
 # Alias de compatibilidad: FIELDS_TO_CODES apunta a 2D (esquema legacy default).
@@ -904,7 +917,8 @@ def _map_period_2f(rpj: str, pnl, bal, flow, fiscal_year: int,
                 return None
             code = _2F_INDIVIDUAL_OVERRIDES.get(field) or FIELDS_TO_CODES_2F.get(field)
             return _amount_prior(rows, code) if code else None
-        return _amount_prior(rows, FIELDS_TO_CODES_2F[field])
+        code = FIELDS_TO_CODES_2F.get(field)
+        return _amount_prior(rows, code) if code else None
 
     interest_income = amt("interest_income", pnl_e)
     equity = amt("equity", bal_e)
@@ -921,8 +935,12 @@ def _map_period_2f(rpj: str, pnl, bal, flow, fiscal_year: int,
     # P&L
     period["interest_income"] = interest_income
     for f in ("interest_expense", "net_interest_income", "loan_loss_provisions",
-              "fee_income_net", "trading_income", "operating_expenses",
-              "operating_income", "pretax_income", "income_tax", "net_income",
+              "nii_after_provisions",
+              "fee_income_net", "op_revenue_after_fees",
+              "trading_income", "op_revenue_total",
+              "operating_expenses", "op_income_pre_op_provisions",
+              "operating_income", "non_op_items",
+              "pretax_income", "income_tax", "net_income",
               "eps", "eps_diluted"):
         period[f] = amt(f, pnl_e)
 

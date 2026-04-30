@@ -111,3 +111,66 @@ def test_interbank_individual_mapea_overrides_correctamente(tmp_path):
     assert p["loans_lt"] is None
     assert p["financial_debt_st"] is None
     assert p["deposits_change"] is None
+
+
+def test_subtotales_bancarios_universales(tmp_path):
+    """`nii_after_provisions` (2F2401) y `non_op_items` (2F2802) deben
+    estar disponibles tanto en Consolidado como en Individual SBS."""
+    rpj = "B80004"
+
+    _write_cache(tmp_path, "GanciaPerdida", 2024, "C", "A", [
+        _row(rpj, "2F0101", 1_200_000), _row(rpj, "2F2301", 600_000),
+        _row(rpj, "2F2401", 3_614_783),  # NII post-LLP
+        _row(rpj, "2F2802", 26_591),     # otros ingresos/gastos
+    ])
+    _write_cache(tmp_path, "BalanceGeneral", 2024, "C", "A", [
+        _row(rpj, "1F3306", 5_500_000),
+    ])
+    _write_cache(tmp_path, "FlujoEfectivo", 2024, "C", "A", [
+        _row(rpj, "3F0501", 240_000),
+    ])
+
+    result = fetch_eeff("BBVAC1", desde=2024, hasta=2024, periodicidad="anual",
+                       cache_dir=tmp_path)
+    p = result["periods"][0]
+    assert p["nii_after_provisions"] == 3_614_783
+    assert p["non_op_items"] == 26_591
+    # Los 3 individual-only deben ser None en Consolidado
+    assert p["op_revenue_after_fees"] is None
+    assert p["op_revenue_total"] is None
+    assert p["op_income_pre_op_provisions"] is None
+
+
+def test_subtotales_individual_only_pobladas_en_sbs(tmp_path):
+    """Los 3 subtotales solo-Individual (2F2505/2601/2701) se mapean cuando
+    el esquema detectado es Individual SBS."""
+    rpj = "B80020"
+    _write_cache(tmp_path, "GanciaPerdida", 2024, "C", "A", [])
+    _write_cache(tmp_path, "BalanceGeneral", 2024, "C", "A", [])
+    _write_cache(tmp_path, "FlujoEfectivo", 2024, "C", "A", [])
+
+    _write_cache(tmp_path, "GanciaPerdida", 2024, "I", "A", [
+        _row(rpj, "2F0101", 5_913_208),
+        _row(rpj, "2F2306", -1_769_217),  # marker individual
+        _row(rpj, "2F2401", 2_019_635),   # NII post-LLP (universal pero presente)
+        _row(rpj, "2F2505", 2_638_471),   # individual only
+        _row(rpj, "2F2601", 3_113_661),   # individual only
+        _row(rpj, "2F2701", 1_151_911),   # individual only
+        _row(rpj, "2F2802", 22_080),      # universal
+    ])
+    _write_cache(tmp_path, "BalanceGeneral", 2024, "I", "A", [
+        _row(rpj, "1F3306", 8_454_827),
+    ])
+    _write_cache(tmp_path, "FlujoEfectivo", 2024, "I", "A", [
+        _row(rpj, "3F0501", 4_793_629),
+    ])
+
+    result = fetch_eeff("INTERBC1", desde=2024, hasta=2024, periodicidad="anual",
+                       cache_dir=tmp_path)
+    p = result["periods"][0]
+    assert p["tipo"] == "individual"
+    assert p["nii_after_provisions"] == 2_019_635
+    assert p["op_revenue_after_fees"] == 2_638_471
+    assert p["op_revenue_total"] == 3_113_661
+    assert p["op_income_pre_op_provisions"] == 1_151_911
+    assert p["non_op_items"] == 22_080
