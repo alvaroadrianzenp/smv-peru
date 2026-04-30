@@ -888,6 +888,140 @@ def _map_period(rpj: str, pnl, bal, flow, fiscal_year: int,
     return _map_period_2d(rpj, pnl, bal, flow, fiscal_year, quarter)
 
 
+def _quarter_offset(year: int, quarter: int, n: int) -> tuple[int, int]:
+    """Devuelve (year, quarter) para `n` trimestres antes del trimestre dado."""
+    total = year * 4 + (quarter - 1) - n
+    return (total // 4, (total % 4) + 1)
+
+
+def _ltm_sum(window: list[dict], field: str):
+    """Suma `field` sobre los períodos de `window`. None si falta cualquiera."""
+    vals = [p.get(field) for p in window]
+    if any(v is None for v in vals):
+        return None
+    return sum(vals)
+
+
+_LTM_FIELDS_2D = (
+    "roe", "roic",
+    "interest_coverage", "interest_coverage_ebitda",
+    "debt_to_ebitda", "net_debt_to_ebitda",
+    "payout_ratio", "capex_intensity",
+)
+
+_LTM_FIELDS_2F = ("nim", "cost_of_risk", "roa", "roe", "payout_ratio")
+
+
+def _apply_ltm_2d(periods: list[dict]) -> None:
+    """Sobrescribe in-place las métricas LTM-sensibles de períodos trimestrales 2D.
+
+    LTM = Last Twelve Months: numeradores (flujos) sumados sobre el trimestre
+    actual + 3 anteriores; denominadores (stocks) promediados entre el cierre
+    actual y el cierre del mismo trimestre del año anterior. Si falta historia
+    suficiente (cualquier trimestre faltante en la ventana o el balance hace
+    4 trimestres), todas las métricas LTM del período → None.
+
+    Anuales (`quarter is None`) no se tocan.
+    """
+    by_key = {(p["fiscal_year"], p["quarter"]): p for p in periods
+              if p.get("quarter") is not None}
+
+    for p in periods:
+        q = p.get("quarter")
+        if q is None:
+            continue
+        y = p["fiscal_year"]
+        prev = [by_key.get(_quarter_offset(y, q, i)) for i in (1, 2, 3)]
+        stock_4q_ago = by_key.get(_quarter_offset(y, q, 4))
+
+        if any(pp is None for pp in prev) or stock_4q_ago is None:
+            for m in _LTM_FIELDS_2D:
+                p[m] = None
+            continue
+
+        window = [p, *prev]
+        ltm_ni = _ltm_sum(window, "net_income")
+        ltm_oi = _ltm_sum(window, "operating_income")
+        ltm_ie = _ltm_sum(window, "interest_expense")
+        ltm_revenue = _ltm_sum(window, "revenue")
+        ltm_ebitda = _ltm_sum(window, "ebitda")
+        ltm_capex = _ltm_sum(window, "capex_total")
+        ltm_div = _ltm_sum(window, "dividends_paid")
+
+        avg_equity = _avg(p.get("equity"), stock_4q_ago.get("equity"))
+        ic_now = (p.get("equity") or 0) + (p.get("total_debt") or 0)
+        ic_prev = (stock_4q_ago.get("equity") or 0) + (stock_4q_ago.get("total_debt") or 0)
+        avg_ic = _avg(ic_now, ic_prev)
+        total_debt_now = p.get("total_debt")
+        net_debt_now = p.get("net_debt")
+
+        p["roe"] = _safe_div(ltm_ni, avg_equity)
+        p["roic"] = _safe_div(ltm_ni, avg_ic)
+
+        if ltm_ie is not None and ltm_ie != 0:
+            p["interest_coverage"] = _safe_div(ltm_oi, abs(ltm_ie))
+        else:
+            p["interest_coverage"] = None
+
+        if ltm_ebitda is not None and ltm_ie is not None and ltm_ie != 0:
+            p["interest_coverage_ebitda"] = ltm_ebitda / abs(ltm_ie)
+        else:
+            p["interest_coverage_ebitda"] = None
+
+        p["debt_to_ebitda"] = (
+            total_debt_now / ltm_ebitda
+            if (ltm_ebitda and total_debt_now is not None) else None
+        )
+        p["net_debt_to_ebitda"] = (
+            net_debt_now / ltm_ebitda
+            if (ltm_ebitda and net_debt_now is not None) else None
+        )
+        p["payout_ratio"] = _safe_div(ltm_div, ltm_ni)
+        p["capex_intensity"] = _safe_div(ltm_capex, ltm_revenue)
+
+
+def _apply_ltm_2f(periods: list[dict]) -> None:
+    """Sobrescribe in-place las métricas LTM-sensibles de períodos trimestrales 2F.
+
+    Misma lógica que `_apply_ltm_2d`. Métricas: nim, cost_of_risk, roa, roe,
+    payout_ratio.
+    """
+    by_key = {(p["fiscal_year"], p["quarter"]): p for p in periods
+              if p.get("quarter") is not None}
+
+    for p in periods:
+        q = p.get("quarter")
+        if q is None:
+            continue
+        y = p["fiscal_year"]
+        prev = [by_key.get(_quarter_offset(y, q, i)) for i in (1, 2, 3)]
+        stock_4q_ago = by_key.get(_quarter_offset(y, q, 4))
+
+        if any(pp is None for pp in prev) or stock_4q_ago is None:
+            for m in _LTM_FIELDS_2F:
+                p[m] = None
+            continue
+
+        window = [p, *prev]
+        ltm_ni = _ltm_sum(window, "net_income")
+        ltm_nii = _ltm_sum(window, "net_interest_income")
+        ltm_llp = _ltm_sum(window, "loan_loss_provisions")
+        ltm_div = _ltm_sum(window, "dividends_paid")
+
+        avg_loans = _avg(p.get("loans_net"), stock_4q_ago.get("loans_net"))
+        avg_assets = _avg(p.get("total_assets"), stock_4q_ago.get("total_assets"))
+        avg_equity = _avg(p.get("equity"), stock_4q_ago.get("equity"))
+
+        p["nim"] = _safe_div(ltm_nii, avg_loans)
+        if ltm_llp is not None:
+            p["cost_of_risk"] = _safe_div(abs(ltm_llp), avg_loans)
+        else:
+            p["cost_of_risk"] = None
+        p["roa"] = _safe_div(ltm_ni, avg_assets)
+        p["roe"] = _safe_div(ltm_ni, avg_equity)
+        p["payout_ratio"] = _safe_div(ltm_div, ltm_ni)
+
+
 def set_dna(result: dict, dna) -> dict:
     """Asigna D&A externo a empresas 2D y recalcula EBITDA + métricas dependientes.
 
@@ -1162,6 +1296,16 @@ def fetch_eeff(
             f"solicitados no tienen datos en SMV para {ticker}: "
             f"[{', '.join(muestra)}{extra}]"
         )
+
+    # En trimestral, sobrescribir métricas LTM-sensibles (ROE, ROIC, NIM, etc.)
+    # con suma móvil de 4 trimestres / promedio de stocks LTM. Si falta historia
+    # suficiente, esas métricas → None (opción A: no rellenar con descargas
+    # implícitas; el usuario debe pedir un año extra de margen si las quiere).
+    if periodicidad == "trimestral":
+        if esquema == "2F":
+            _apply_ltm_2f(periods_data)
+        else:
+            _apply_ltm_2d(periods_data)
 
     # Moneda: tomada del primer período (todas las empresas reportan
     # consistentemente en una sola moneda a lo largo del tiempo).
