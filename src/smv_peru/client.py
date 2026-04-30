@@ -1326,6 +1326,29 @@ def fetch_eeff(
             results[(op, year, period, t)] = _call_smv(op, year, period, t, cache_dir)
             tick()
 
+    # ---- Early-exit: si el RPJ NO aparece en ningún resultado Consolidado,
+    # ir directo a Individual (paralelizado) en vez de hacer cascadas por
+    # período secuenciales. Caso típico: INTERBC1 (Interbank), que SMV publica
+    # solo en Individual. Sin este check, la cascada por-período haría 3 calls
+    # Individual secuenciales por cada año (15+ calls serial → ~2 min) en lugar
+    # de una sola descarga paralelizada (~10s).
+    if tipo_code == "C":
+        any_consolidated = any(
+            _has_rpj_data(rows, rpj)
+            for (op, year, period, t), rows in results.items()
+            if t == "C"
+        )
+        if not any_consolidated:
+            logger.info(
+                f"smv-peru: {ticker} no aparece en ningún período Consolidado; "
+                f"reintentando con Individual"
+            )
+            return fetch_eeff(
+                ticker, desde, hasta,
+                tipo="individual", periodicidad=periodicidad,
+                cache_dir=cache_dir, max_workers=max_workers,
+            )
+
     # ---- Fase 3: procesar usando resultados ya descargados ----------------
     # Cascada por período (no por ticker entero): si Consolidado tiene PNL/Bal
     # incompletos para este RPJ en un año específico, intentamos Individual

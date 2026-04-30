@@ -119,6 +119,42 @@ def test_si_q4_tampoco_existe_cae_a_individual(tmp_path):
     assert p["equity"] == 5_300_000
 
 
+def test_early_exit_a_individual_si_rpj_nunca_aparece_en_consolidado(tmp_path):
+    """Cuando el RPJ NO está en ningún resultado Consolidado del rango (caso
+    INTERBC1, que SMV publica solo en Individual), la librería debe ir directo
+    a Individual sin pasar por cascadas por período. Antes este caso degradaba
+    a cascadas serial = ~15 calls SOAP secuenciales por ticker.
+    """
+    rpj = "B80020"  # INTERBC1
+
+    # 3 años de Consolidado completamente vacíos para este RPJ
+    for y in (2020, 2021, 2022):
+        _write_cache(tmp_path, "GanciaPerdida", y, "C", "A", [])
+        _write_cache(tmp_path, "BalanceGeneral", y, "C", "A", [])
+        _write_cache(tmp_path, "FlujoEfectivo", y, "C", "A", [])
+
+    # Individual completo (lo que SMV sí publica para Interbank)
+    for y in (2020, 2021, 2022):
+        _write_cache(tmp_path, "GanciaPerdida", y, "I", "A", [
+            _row(rpj, "2F0101", 1_000_000 + y), _row(rpj, "2F2301", 500_000),
+        ])
+        _write_cache(tmp_path, "BalanceGeneral", y, "I", "A", [
+            _row(rpj, "1F3306", 5_000_000 + y),
+        ])
+        _write_cache(tmp_path, "FlujoEfectivo", y, "I", "A", [
+            _row(rpj, "3F0501", 200_000),
+        ])
+
+    result = fetch_eeff("INTERBC1", desde=2020, hasta=2022, periodicidad="anual",
+                       cache_dir=tmp_path)
+    assert result is not None
+    assert len(result["periods"]) == 3
+    for p in result["periods"]:
+        assert p["tipo"] == "individual"
+        assert "balance_source" not in p
+    assert result["info"]["tipo"] == "individual"
+
+
 def test_consolidado_completo_marca_tipo_consolidado(tmp_path):
     """Caso normal: si Consolidado tiene todo, period['tipo'] == 'consolidado'."""
     rpj = "B80004"
