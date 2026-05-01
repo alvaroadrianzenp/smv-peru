@@ -45,16 +45,14 @@ from .empresas import EMPRESAS
 _DIRECT_CF_FIELDS = frozenset({
     "cash_from_customers", "interest_received_op",
     "cash_to_suppliers", "cash_to_employees",
+    "interest_paid", "taxes_paid",
 })
 _INDIRECT_CF_FIELDS = frozenset({
-    "dna",
+    "ni_before_tax_cf", "dna",
     "fx_adjustment_cf", "ppe_disposal_cf", "other_non_cash_cf",
     "change_in_receivables", "change_in_other_op_assets",
     "change_in_inventory", "change_in_payables", "change_in_other_op_liab",
 })
-# `ni_before_tax_cf` (3D05ST) NO se filtra: SMV lo publica como subtotal
-# automático también en empresas con método directo, no es exclusivo del
-# bloque indirecto.
 
 SECTIONS_2D: list[tuple[str, list[tuple[str, str, str]]]] = [
     ("ESTADO DE RESULTADOS", [
@@ -118,7 +116,10 @@ SECTIONS_2D: list[tuple[str, list[tuple[str, str, str]]]] = [
         ("interest_received_op", "Interest received (op)", "money"),
         ("cash_to_suppliers", "Cash to suppliers", "money"),
         ("cash_to_employees", "Cash to employees", "money"),
+        ("interest_paid", "Interest paid (total)", "money"),
+        ("taxes_paid", "Taxes paid", "money"),
         ("Operación — Método indirecto", "subheader"),
+        ("ni_before_tax_cf", "Pretax income (CF starting point)", "money"),
         ("dna", "D&A", "money"),
         ("fx_adjustment_cf", "FX adjustment (non-cash)", "money"),
         ("ppe_disposal_cf", "PP&E disposal (gain/loss, non-cash)", "money"),
@@ -128,23 +129,20 @@ SECTIONS_2D: list[tuple[str, list[tuple[str, str, str]]]] = [
         ("change_in_inventory", "Δ Inventory", "money"),
         ("change_in_payables", "Δ Payables", "money"),
         ("change_in_other_op_liab", "Δ Other operating liabilities", "money"),
-        ("Operación — Subtotales", "subheader"),
-        ("ni_before_tax_cf", "Pretax income (CF starting point)", "money"),
-        ("interest_paid", "Interest paid (total)", "money"),
-        ("taxes_paid", "Taxes paid", "money"),
+        ("Total operación", "subheader"),
         ("operating_cf", "Operating cash flow (subtotal)", "money"),
         ("Inversión", "subheader"),
         ("ppe_proceeds", "PP&E proceeds", "money"),
         ("capex_ppe", "Capex PP&E", "money"),
         ("capex_intangibles", "Capex intangibles", "money"),
-        ("capex_total", "Capex total (absolute)", "money"),
+        ("capex_total", "Capex total", "money"),
         ("dividends_received", "Dividends received (inv)", "money"),
         ("investing_cf", "Investing cash flow (subtotal)", "money"),
         ("Financiamiento", "subheader"),
         ("debt_issued", "Debt issued", "money"),
         ("debt_repaid", "Debt repaid", "money"),
         ("equity_issued", "Equity issued", "money"),
-        ("dividends_paid", "Dividends paid (absolute)", "money"),
+        ("dividends_paid", "Dividends paid", "money"),
         ("financing_cf", "Financing cash flow (subtotal)", "money"),
         ("Resultado", "subheader"),
         ("fcf", "Free cash flow", "money"),

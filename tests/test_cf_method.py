@@ -95,9 +95,13 @@ def test_excel_oculta_indirecto_para_empresa_directa(tmp_path):
     assert "Operación — Método indirecto" not in flat
     assert "Δ Receivables" not in flat
     assert "FX adjustment (non-cash)" not in flat
-    # `ni_before_tax_cf` (3D05ST) sí aparece — vive en el subgrupo Subtotales
-    # y se publica en empresas con cualquier método.
-    assert "Pretax income (CF starting point)" in flat
+    # `ni_before_tax_cf` ahora vive en el subgrupo Indirecto y se oculta para
+    # empresas con método directo (aunque SMV lo publique como subtotal). El
+    # dato sigue accesible vía `period["ni_before_tax_cf"]`.
+    assert "Pretax income (CF starting point)" not in flat
+    # interest_paid y taxes_paid ahora viven en el subgrupo Directo
+    assert "Interest paid (total)" in flat
+    assert "Taxes paid" in flat
 
 
 def test_csv_oculta_indirecto_para_empresa_directa(tmp_path):

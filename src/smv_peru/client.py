@@ -834,26 +834,31 @@ def _map_period_2d(rpj: str, pnl, bal, flow, fiscal_year: int,
     else:
         period["effective_tax_rate"] = None
 
+    # Pagos en efectivo: mantener el signo natural de SMV (negativo cuando es
+    # salida de caja). El Excel muestra los negativos entre paréntesis, así
+    # el lector puede sumar mentalmente para verificar el subtotal SMV.
     ip_op = period["interest_paid_op"] or 0
     ip_fin = period["interest_paid_fin"] or 0
-    interest_paid = abs(ip_op) + abs(ip_fin)
-    period["interest_paid"] = interest_paid if interest_paid > 0 else None
+    interest_paid_total = ip_op + ip_fin
+    period["interest_paid"] = interest_paid_total if interest_paid_total != 0 else None
 
-    div_fin = period["dividends_paid_fin"]
-    period["dividends_paid"] = abs(div_fin) if div_fin else None
+    period["dividends_paid"] = period["dividends_paid_fin"]
+    period["taxes_paid"] = period["taxes_paid_op"]
 
-    tx_op = period["taxes_paid_op"]
-    period["taxes_paid"] = abs(tx_op) if tx_op else None
-
-    period["payout_ratio"] = _safe_div(period["dividends_paid"], period["net_income"])
+    # Ratios usan abs() internamente para que no salgan negativos por convención.
+    period["payout_ratio"] = _safe_div(
+        abs(period["dividends_paid"]) if period["dividends_paid"] else None,
+        period["net_income"],
+    )
 
     capex_ppe = period["capex_ppe"] or 0
     capex_int = period["capex_intangibles"] or 0
     capex_total_signed = capex_ppe + capex_int
-    period["capex_total"] = (
-        abs(capex_total_signed) if capex_total_signed != 0 else None
+    period["capex_total"] = capex_total_signed if capex_total_signed != 0 else None
+    period["capex_intensity"] = _safe_div(
+        abs(period["capex_total"]) if period["capex_total"] else None,
+        revenue,
     )
-    period["capex_intensity"] = _safe_div(period["capex_total"], revenue)
 
     op_cf = period["operating_cf"]
     if op_cf is None:
@@ -1048,10 +1053,12 @@ def _map_period_2f(rpj: str, pnl, bal, flow, fiscal_year: int,
     period["roa"] = _safe_div(period["net_income"], avg_assets)
     period["roe"] = _safe_div(period["net_income"], avg_equity)
 
-    # Dividendos
-    div_fin = period["dividends_paid_fin"]
-    period["dividends_paid"] = abs(div_fin) if div_fin else None
-    period["payout_ratio"] = _safe_div(period["dividends_paid"], period["net_income"])
+    # Dividendos: mantener signo natural de SMV (negativo cuando es salida).
+    period["dividends_paid"] = period["dividends_paid_fin"]
+    period["payout_ratio"] = _safe_div(
+        abs(period["dividends_paid"]) if period["dividends_paid"] else None,
+        period["net_income"],
+    )
 
     # YoY growth
     period["interest_income_yoy"] = _yoy(interest_income, interest_income_prior)
@@ -1166,8 +1173,12 @@ def _apply_ltm_2d(periods: list[dict]) -> None:
             net_debt_now / ltm_ebitda
             if (ltm_ebitda and net_debt_now is not None) else None
         )
-        p["payout_ratio"] = _safe_div(ltm_div, ltm_ni)
-        p["capex_intensity"] = _safe_div(ltm_capex, ltm_revenue)
+        p["payout_ratio"] = _safe_div(
+            abs(ltm_div) if ltm_div is not None else None, ltm_ni
+        )
+        p["capex_intensity"] = _safe_div(
+            abs(ltm_capex) if ltm_capex is not None else None, ltm_revenue
+        )
 
 
 def _apply_ltm_2f(periods: list[dict]) -> None:
@@ -1209,7 +1220,9 @@ def _apply_ltm_2f(periods: list[dict]) -> None:
             p["cost_of_risk"] = None
         p["roa"] = _safe_div(ltm_ni, avg_assets)
         p["roe"] = _safe_div(ltm_ni, avg_equity)
-        p["payout_ratio"] = _safe_div(ltm_div, ltm_ni)
+        p["payout_ratio"] = _safe_div(
+            abs(ltm_div) if ltm_div is not None else None, ltm_ni
+        )
 
 
 def set_dna(result: dict, dna) -> dict:

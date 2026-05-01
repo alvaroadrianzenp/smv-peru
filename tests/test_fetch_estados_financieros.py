@@ -97,11 +97,16 @@ def test_alicorp_2023_interest_expense_matches_audited_pdf():
 
 
 def test_alicorp_2023_dividends_paid_matches_audited_pdf():
-    """Dividendos Pagados 2023 según PDF auditado: 214,021 (positivo, salida)."""
+    """Dividendos Pagados 2023 según PDF auditado: 214,021 (negativo, salida).
+
+    SMV publica los pagos como negativos (salidas de caja); la librería
+    mantiene ese signo natural para que el lector pueda sumar mentalmente y
+    verificar el subtotal de financiamiento.
+    """
     p = fetch_estados_financieros(
         "ALICORC1", desde=2023, hasta=2023, cache_dir=FIXTURES,
     )["periods"][0]
-    assert p["dividends_paid"] == 214_021
+    assert p["dividends_paid"] == -214_021
 
 
 def test_alicorp_2023_total_liabilities_matches_audited_pdf():
@@ -201,11 +206,13 @@ def test_alicorp_2023_derived_metrics_make_sense():
     assert p["roic"] < p["roe"]
 
 
-def test_capex_total_is_sum_of_ppe_and_intangibles_absolute():
+def test_capex_total_is_signed_sum_of_ppe_and_intangibles():
+    """capex_total mantiene el signo natural de SMV (negativo cuando es salida)
+    para que sume coherentemente con los demás items del bloque de inversión."""
     p = fetch_estados_financieros(
         "ALICORC1", desde=2023, hasta=2023, cache_dir=FIXTURES,
     )["periods"][0]
-    expected = abs(p["capex_ppe"]) + abs(p["capex_intangibles"])
+    expected = (p["capex_ppe"] or 0) + (p["capex_intangibles"] or 0)
     assert p["capex_total"] == expected
 
 
