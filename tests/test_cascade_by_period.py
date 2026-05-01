@@ -155,6 +155,50 @@ def test_early_exit_a_individual_si_rpj_nunca_aparece_en_consolidado(tmp_path):
     assert result["info"]["tipo"] == "individual"
 
 
+def test_cascada_individual_en_trimestral_no_rompe_ytd(tmp_path):
+    """Regresión: cuando un período trimestral cae a Individual via cascada
+    por-período, la detección YTD sobre Individual no debe lanzar excepción.
+    Antes había un bug donde `_is_ytd` se llamaba con argumentos incorrectos
+    en este path (faltaba el `codigo_referencia`)."""
+    rpj = "B80004"
+    # Q3 2023: C tiene PNL+Flow OK pero Bal vacío (escenario que activa cascada)
+    _write_cache(tmp_path, "GanciaPerdida", 2023, "C", "3", [
+        _row(rpj, "2F0101", 800_000), _row(rpj, "2F2301", 400_000),
+    ])
+    _write_cache(tmp_path, "BalanceGeneral", 2023, "C", "3", [])  # gap C
+    _write_cache(tmp_path, "FlujoEfectivo", 2023, "C", "3", [
+        _row(rpj, "3F0501", 150_000),
+    ])
+    # Q4 C tampoco tiene Balance — fallback Q4 falla, cae a Individual
+    _write_cache(tmp_path, "BalanceGeneral", 2023, "C", "4", [])
+
+    # Otros buckets C necesarios para que la fase 1-2 no falle (vacíos OK)
+    for q in ("1", "2", "4", "A"):
+        for op in ("GanciaPerdida", "BalanceGeneral", "FlujoEfectivo"):
+            if not (tmp_path / f"obtener_{op}_2023_C_{q}.json").exists():
+                _write_cache(tmp_path, op, 2023, "C", q, [
+                    _row(rpj, "2F0101", 0)  # algo con el RPJ para que C no caiga al early-exit
+                ])
+
+    # Individual completo para Q3 2023 + Q4 + Anual (necesarios para detección YTD)
+    for q in ("1", "2", "3", "4", "A"):
+        _write_cache(tmp_path, "GanciaPerdida", 2023, "I", q, [
+            _row(rpj, "2F0101", 800_000), _row(rpj, "2F2301", 400_000),
+        ])
+        _write_cache(tmp_path, "BalanceGeneral", 2023, "I", q, [
+            _row(rpj, "1F3306", 5_300_000),
+        ])
+        _write_cache(tmp_path, "FlujoEfectivo", 2023, "I", q, [
+            _row(rpj, "3F0501", 150_000), _row(rpj, "3D01ST", 150_000),
+        ])
+
+    # No debe lanzar TypeError en _is_ytd
+    result = fetch_eeff("BBVAC1", desde=2023, hasta=2023, periodicidad="trimestral",
+                       cache_dir=tmp_path)
+    # Lo importante: no crash. Que devuelva períodos o no es secundario aquí.
+    assert result is not None or result is None  # solo verificar que no rompe
+
+
 def test_consolidado_completo_marca_tipo_consolidado(tmp_path):
     """Caso normal: si Consolidado tiene todo, period['tipo'] == 'consolidado'."""
     rpj = "B80004"

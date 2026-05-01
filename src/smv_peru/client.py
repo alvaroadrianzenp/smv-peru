@@ -1542,12 +1542,22 @@ def fetch_eeff(
                         f"Consolidado; usando Individual como fallback"
                     )
                     # Cuando el origen es Individual, recalcular YTD sobre
-                    # datos Individuales del mismo año.
+                    # datos Individuales del mismo año. Cargamos Q4 y Anual
+                    # Individual al diccionario de resultados para reutilizar
+                    # la lógica canónica de detección.
                     if periodicidad == "trimestral" and p in ("2", "3", "4"):
                         if cf_is_ytd_i is None:
-                            ind_q4 = _call_smv(OP_FLOW, y, "4", "I", cache_dir)
-                            ind_anual = _call_smv(OP_FLOW, y, "A", "I", cache_dir)
-                            cf_is_ytd_i = _is_ytd(ind_q4 or [], ind_anual or [], rpj)
+                            results.setdefault(
+                                (OP_FLOW, y, "4", "I"),
+                                _call_smv(OP_FLOW, y, "4", "I", cache_dir),
+                            )
+                            results.setdefault(
+                                (OP_FLOW, y, "A", "I"),
+                                _call_smv(OP_FLOW, y, "A", "I", cache_dir),
+                            )
+                            cf_is_ytd_i = _check_cf_ytd_from_results(
+                                results, rpj, y, "I"
+                            )
                         if cf_is_ytd_i and flow is not None:
                             flow_prev = _call_smv(OP_FLOW, y, str(int(p) - 1), "I", cache_dir)
                             if flow_prev is not None:
