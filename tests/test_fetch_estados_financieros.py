@@ -206,6 +206,21 @@ def test_alicorp_2023_derived_metrics_make_sense():
     assert p["roic"] < p["roe"]
 
 
+def test_alicorp_2024_subsidiaries_purchased():
+    """Alicorp 2024: SMV publica `3D0219` = -517,616 (compra menor de
+    subsidiarias). Validamos que el campo amigable lo expone con su signo
+    natural negativo (es salida de caja)."""
+    p = fetch_estados_financieros(
+        "ALICORC1", desde=2024, hasta=2024, cache_dir=FIXTURES,
+    )["periods"][0]
+    assert p["subsidiaries_purchased"] == -517_616
+    # Los otros 2 son 0 ese año → la librería los normaliza a None
+    # vía _amount (que devuelve None si Monto1 es 0 o ausente).
+    # Aquí solo nos aseguramos de que el campo existe en el dict.
+    assert "subsidiaries_obtained_control" in p
+    assert "subsidiaries_lost_control" in p
+
+
 def test_cash_change_quadrature_alicorp_2023():
     """Verifica la cuadratura de la sección de cierre del CF:
     `start_cash + net_change_in_cash == end_cash`. SMV expone los 3 valores

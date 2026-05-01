@@ -167,6 +167,10 @@ FIELDS_TO_CODES_2D: dict[str, str] = {
     "capex_ppe":           "3D0206",
     "capex_intangibles":   "3D0207",
     "dividends_received":  "3D0211",  # Dividendos recibidos (actividad inversión)
+    # M&A en NIC 7: tres cuentas estándar de transacciones estratégicas.
+    "subsidiaries_lost_control":     "3D0218",  # (+) pérdida de control: desinversión
+    "subsidiaries_purchased":        "3D0219",  # (−) compra menor (sin obtener control)
+    "subsidiaries_obtained_control": "3D0232",  # (−) adquisición que da control mayoritario
     "investing_cf":        "3D02ST",
     "dividends_paid_fin":  "3D0305",
     "interest_paid_fin":   "3D0311",
@@ -748,7 +752,10 @@ def _map_period_2d(rpj: str, pnl, bal, flow, fiscal_year: int,
               "cash_to_suppliers", "cash_to_employees",
               "interest_paid_op", "taxes_paid_op", "operating_cf",
               "ppe_proceeds", "capex_ppe", "capex_intangibles",
-              "dividends_received", "investing_cf",
+              "dividends_received",
+              "subsidiaries_lost_control", "subsidiaries_purchased",
+              "subsidiaries_obtained_control",
+              "investing_cf",
               "dividends_paid_fin", "interest_paid_fin", "debt_issued",
               "equity_issued", "debt_repaid", "financing_cf",
               "cash_change_pre_fx", "fx_effect_cash", "net_change_in_cash",
