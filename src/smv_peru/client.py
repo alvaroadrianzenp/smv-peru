@@ -174,7 +174,11 @@ FIELDS_TO_CODES_2D: dict[str, str] = {
     "equity_issued":       "3D0327",  # Emisión de Acciones (aumento de capital)
     "debt_repaid":         "3D0330",
     "financing_cf":        "3D03ST",
-    "end_cash":            "3D04ST",
+    "cash_change_pre_fx":  "3D0401",  # Aumento/Disminución neto antes de FX
+    "fx_effect_cash":      "3D0404",  # Efecto del tipo de cambio sobre el efectivo
+    "net_change_in_cash":  "3D0405",  # Aumento/Disminución neto total
+    "start_cash":          "3D0402",  # Efectivo al inicio del período
+    "end_cash":            "3D04ST",  # Efectivo al cierre del período
     # D&A: solo aparece cuando la empresa publica CF con MÉTODO INDIRECTO.
     # Para empresas con método directo, esta cuenta no existe en SMV y `dna`
     # quedará None — y por consiguiente `ebitda` y todas las métricas
@@ -276,7 +280,11 @@ FIELDS_TO_CODES_2F: dict[str, str] = {
     "deposits_change":  "3F0801",  # Aumento neto de depósitos
     "loans_change":     "3F0805",  # Cambio neto en cartera de créditos
     "dividends_paid_fin": "3F0808",  # Dividendos pagados (negativo)
-    "end_cash":         "3F1201",  # Efectivo al cierre
+    "cash_change_pre_fx": "3F1002",  # Aumento/Disminución neto antes de FX
+    "fx_effect_cash":     "3F1003",  # Efecto del tipo de cambio sobre el efectivo
+    "net_change_in_cash": "3F1001",  # Aumento/Disminución neto total
+    "start_cash":         "3F1101",  # Efectivo al inicio del período
+    "end_cash":         "3F1201",  # Efectivo al cierre del período
 }
 
 CODIGOS_USADOS_2F: frozenset[str] = frozenset(FIELDS_TO_CODES_2F.values())
@@ -743,7 +751,8 @@ def _map_period_2d(rpj: str, pnl, bal, flow, fiscal_year: int,
               "dividends_received", "investing_cf",
               "dividends_paid_fin", "interest_paid_fin", "debt_issued",
               "equity_issued", "debt_repaid", "financing_cf",
-              "end_cash", "dna",
+              "cash_change_pre_fx", "fx_effect_cash", "net_change_in_cash",
+              "start_cash", "end_cash", "dna",
               "ni_before_tax_cf", "fx_adjustment_cf", "ppe_disposal_cf",
               "other_non_cash_cf", "change_in_receivables",
               "change_in_other_op_assets", "change_in_inventory",
@@ -964,7 +973,9 @@ def _map_period_2f(rpj: str, pnl, bal, flow, fiscal_year: int,
 
     # Flujo
     for f in ("dna", "operating_cf", "investing_cf", "financing_cf",
-              "deposits_change", "loans_change", "dividends_paid_fin", "end_cash"):
+              "deposits_change", "loans_change", "dividends_paid_fin",
+              "cash_change_pre_fx", "fx_effect_cash", "net_change_in_cash",
+              "start_cash", "end_cash"):
         period[f] = amt(f, flow_e)
     period["cf_method"] = _detect_cf_method(flow_e)
 

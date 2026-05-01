@@ -206,6 +206,21 @@ def test_alicorp_2023_derived_metrics_make_sense():
     assert p["roic"] < p["roe"]
 
 
+def test_cash_change_quadrature_alicorp_2023():
+    """Verifica la cuadratura de la sección de cierre del CF:
+    `start_cash + net_change_in_cash == end_cash`. SMV expone los 3 valores
+    de forma independiente, así que esta es una validación directa contra el
+    propio web service."""
+    p = fetch_estados_financieros(
+        "ALICORC1", desde=2023, hasta=2023, cache_dir=FIXTURES,
+    )["periods"][0]
+    assert p["start_cash"] is not None
+    assert p["net_change_in_cash"] is not None
+    assert p["end_cash"] is not None
+    # Tolerancia mínima por redondeo (los valores vienen en miles enteros).
+    assert abs(p["start_cash"] + p["net_change_in_cash"] - p["end_cash"]) < 1
+
+
 def test_capex_total_is_signed_sum_of_ppe_and_intangibles():
     """capex_total mantiene el signo natural de SMV (negativo cuando es salida)
     para que sume coherentemente con los demás items del bloque de inversión."""

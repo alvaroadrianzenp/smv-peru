@@ -146,6 +146,10 @@ SECTIONS_2D: list[tuple[str, list[tuple[str, str, str]]]] = [
         ("financing_cf", "Financing cash flow (subtotal)", "money"),
         ("Resultado", "subheader"),
         ("fcf", "Free cash flow", "money"),
+        ("cash_change_pre_fx", "Net change in cash (pre-FX)", "money"),
+        ("fx_effect_cash", "FX effect on cash", "money"),
+        ("net_change_in_cash", "Net change in cash (total)", "money"),
+        ("start_cash", "Start-of-period cash", "money"),
         ("end_cash", "End-of-period cash", "money"),
     ]),
     ("EBITDA Y MÉTRICAS DE CRÉDITO", [
@@ -244,6 +248,10 @@ SECTIONS_2F: list[tuple[str, list[tuple[str, str, str]]]] = [
         ("dividends_paid", "Dividends paid (absolute)", "money"),
         ("financing_cf", "Financing cash flow (subtotal)", "money"),
         ("Resultado", "subheader"),
+        ("cash_change_pre_fx", "Net change in cash (pre-FX)", "money"),
+        ("fx_effect_cash", "FX effect on cash", "money"),
+        ("net_change_in_cash", "Net change in cash (total)", "money"),
+        ("start_cash", "Start-of-period cash", "money"),
         ("end_cash", "End-of-period cash", "money"),
     ]),
     ("RATIOS BANCARIOS", [
