@@ -413,7 +413,32 @@ _TIPO_CODES = {"consolidado": "C", "individual": "I"}
 _PERIODICIDAD_PERIODOS = {"anual": ["A"], "trimestral": ["1", "2", "3", "4"]}
 
 
+# Operaciones SOAP soportadas por el web service. Restringidas a este set
+# para que un valor inesperado en `operacion` no se interpole en el SOAP
+# body ni en el nombre de archivo de cache (defensa en profundidad).
+_VALID_OPERACIONES = frozenset({
+    "obtener_GanciaPerdida",
+    "obtener_BalanceGeneral",
+    "obtener_FlujoEfectivo",
+})
+
+_VALID_PERIODOS = frozenset({"A", "1", "2", "3", "4"})
+_VALID_TIPO_CODES = frozenset({"C", "I"})
+
+
 def _soap_envelope(operacion: str, ejercicio: int, periodo: str, tipo: str) -> bytes:
+    # Validación estricta de los valores que se interpolan en el body. Hoy
+    # todos los call sites ya pasan valores válidos, pero estos asserts
+    # blindan contra cambios futuros que añadan parámetros string-libres
+    # (ticker, RPJ filtrable, etc.) y eviten inyección XML/SOAP.
+    if operacion not in _VALID_OPERACIONES:
+        raise ValueError(f"operacion inválida: {operacion!r}")
+    if not isinstance(ejercicio, int) or not (1990 <= ejercicio <= 2100):
+        raise ValueError(f"ejercicio fuera de rango razonable: {ejercicio!r}")
+    if periodo not in _VALID_PERIODOS:
+        raise ValueError(f"periodo inválido: {periodo!r}")
+    if tipo not in _VALID_TIPO_CODES:
+        raise ValueError(f"tipo inválido: {tipo!r}")
     return (
         '<?xml version="1.0" encoding="utf-8"?>'
         '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
@@ -1551,6 +1576,16 @@ def fetch_eeff(
     if periodicidad not in _PERIODICIDAD_PERIODOS:
         raise ValueError(
             f"periodicidad debe ser 'anual' o 'trimestral', recibido: {periodicidad!r}"
+        )
+    if not isinstance(desde, int) or not isinstance(hasta, int):
+        raise ValueError(
+            f"desde y hasta deben ser enteros (años fiscales), recibido: "
+            f"desde={desde!r}, hasta={hasta!r}"
+        )
+    if not (1990 <= desde <= 2100) or not (1990 <= hasta <= 2100):
+        raise ValueError(
+            f"desde y hasta deben estar entre 1990 y 2100 (rango razonable "
+            f"para SMV), recibido: desde={desde}, hasta={hasta}"
         )
     if desde > hasta:
         raise ValueError(f"desde ({desde}) no puede ser mayor que hasta ({hasta})")

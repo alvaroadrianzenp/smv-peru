@@ -427,6 +427,39 @@ def test_desde_greater_than_hasta_raises():
         )
 
 
+def test_desde_no_entero_raises():
+    with pytest.raises(ValueError, match="enteros"):
+        fetch_estados_financieros(
+            "ALICORC1", desde="2023", hasta=2023, cache_dir=FIXTURES,
+        )
+
+
+def test_anho_fuera_de_rango_razonable_raises():
+    with pytest.raises(ValueError, match="1990 y 2100"):
+        fetch_estados_financieros(
+            "ALICORC1", desde=1500, hasta=1500, cache_dir=FIXTURES,
+        )
+    with pytest.raises(ValueError, match="1990 y 2100"):
+        fetch_estados_financieros(
+            "ALICORC1", desde=2500, hasta=2500, cache_dir=FIXTURES,
+        )
+
+
+def test_soap_envelope_rechaza_operacion_invalida():
+    """Defensa en profundidad: si una llamada interna pasa una operación
+    fuera del set permitido, _soap_envelope debe rechazarla en vez de
+    interpolarla en el body SOAP (donde podría inyectar XML)."""
+    from smv_peru.client import _soap_envelope
+    with pytest.raises(ValueError, match="operacion"):
+        _soap_envelope("evil_op", 2023, "A", "C")
+    with pytest.raises(ValueError, match="periodo"):
+        _soap_envelope("obtener_BalanceGeneral", 2023, "</Periodo><x>", "C")
+    with pytest.raises(ValueError, match="tipo"):
+        _soap_envelope("obtener_BalanceGeneral", 2023, "A", "X")
+    with pytest.raises(ValueError, match="ejercicio"):
+        _soap_envelope("obtener_BalanceGeneral", 1500, "A", "C")
+
+
 def test_fetch_estados_financieros_is_alias_of_fetch_eeff():
     """Backward-compat: el nombre antiguo debe seguir funcionando idéntico al nuevo."""
     from smv_peru import fetch_eeff, fetch_estados_financieros
