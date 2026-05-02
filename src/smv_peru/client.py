@@ -867,11 +867,11 @@ def _map_period_2d(rpj: str, pnl, bal, flow, fiscal_year: int,
     period["dividends_paid"] = period["dividends_paid_fin"]
     period["taxes_paid"] = period["taxes_paid_op"]
 
-    # Ratios usan abs() internamente para que no salgan negativos por convención.
-    period["payout_ratio"] = _safe_div(
-        abs(period["dividends_paid"]) if period["dividends_paid"] else None,
-        period["net_income"],
-    )
+    # payout_ratio se calcula en post-pass con lag T-1 (convención peruana:
+    # la JGA aprueba distribución sobre utilidades del ejercicio cerrado
+    # anterior). Anuales: _apply_payout_lagged_annual. Trimestrales LTM:
+    # _apply_ltm_2d.
+    period["payout_ratio"] = None
 
     capex_ppe = period["capex_ppe"] or 0
     capex_int = period["capex_intangibles"] or 0
@@ -1107,10 +1107,8 @@ def _map_period_2f(rpj: str, pnl, bal, flow, fiscal_year: int,
 
     # Dividendos: mantener signo natural de SMV (negativo cuando es salida).
     period["dividends_paid"] = period["dividends_paid_fin"]
-    period["payout_ratio"] = _safe_div(
-        abs(period["dividends_paid"]) if period["dividends_paid"] else None,
-        period["net_income"],
-    )
+    # payout_ratio se calcula en post-pass con lag T-1 (convención peruana).
+    period["payout_ratio"] = None
 
     # YoY growth
     period["interest_income_yoy"] = _yoy(interest_income, interest_income_prior)
@@ -1250,10 +1248,17 @@ def _apply_ltm_2d(periods: list[dict]) -> None:
         p["cfo_to_debt"] = _safe_div(ltm_ocf, total_debt_now or None)
         p["fcf_to_debt"] = _safe_div(ltm_fcf, total_debt_now or None)
 
-        # Política de capital
-        p["payout_ratio"] = _safe_div(
-            abs(ltm_div) if ltm_div is not None else None, ltm_ni
-        )
+        # Política de capital. payout: dividendos LTM (T) / NI LTM lagged
+        # (4 trimestres antes — ejercicio cerrado anterior, convención
+        # peruana de la JGA). Si falta historia lagged, queda None.
+        prev_lagged_2d = [by_key.get(_quarter_offset(y, q, i)) for i in (4, 5, 6, 7)]
+        if any(pp is None for pp in prev_lagged_2d):
+            p["payout_ratio"] = None
+        else:
+            ltm_ni_lagged = _ltm_sum(prev_lagged_2d, "net_income")
+            p["payout_ratio"] = _safe_div(
+                abs(ltm_div) if ltm_div is not None else None, ltm_ni_lagged
+            )
         p["dividend_coverage_fcf"] = _safe_div(
             ltm_fcf,
             abs(ltm_div) if ltm_div is not None else None,
@@ -1312,8 +1317,42 @@ def _apply_ltm_2f(periods: list[dict]) -> None:
             p["cost_of_risk"] = None
         p["roa"] = _safe_div(ltm_ni, avg_assets)
         p["roe"] = _safe_div(ltm_ni, avg_equity)
+        # payout: dividendos LTM (T) / NI LTM lagged (4 trimestres antes —
+        # ejercicio cerrado anterior, convención peruana). Si falta historia
+        # lagged, queda None.
+        prev_lagged_2f = [by_key.get(_quarter_offset(y, q, i)) for i in (4, 5, 6, 7)]
+        if any(pp is None for pp in prev_lagged_2f):
+            p["payout_ratio"] = None
+        else:
+            ltm_ni_lagged = _ltm_sum(prev_lagged_2f, "net_income")
+            p["payout_ratio"] = _safe_div(
+                abs(ltm_div) if ltm_div is not None else None, ltm_ni_lagged
+            )
+
+
+def _apply_payout_lagged_annual(periods: list[dict]) -> None:
+    """Calcula ``payout_ratio`` en períodos anuales con lag T-1.
+
+    Convención peruana: la JGA aprueba la distribución de utilidades del
+    ejercicio cerrado anterior, así que los dividendos pagados en T se
+    miden contra el net income de T-1. Si no existe el período T-1 en la
+    serie, ``payout_ratio`` queda None.
+
+    Trimestrales no se tocan (los maneja ``_apply_ltm_2d`` / ``_apply_ltm_2f``).
+    """
+    by_year = {p["fiscal_year"]: p for p in periods if p.get("quarter") is None}
+    for p in periods:
+        if p.get("quarter") is not None:
+            continue
+        prev = by_year.get(p["fiscal_year"] - 1)
+        if prev is None:
+            p["payout_ratio"] = None
+            continue
+        ni_prev = prev.get("net_income")
+        div_t = p.get("dividends_paid")
         p["payout_ratio"] = _safe_div(
-            abs(ltm_div) if ltm_div is not None else None, ltm_ni
+            abs(div_t) if div_t is not None else None,
+            ni_prev,
         )
 
 
@@ -1726,6 +1765,9 @@ def fetch_eeff(
             _apply_ltm_2f(periods_data)
         else:
             _apply_ltm_2d(periods_data)
+
+    # payout_ratio anual: T / (T-1). Inocuo si no hay anuales en periods_data.
+    _apply_payout_lagged_annual(periods_data)
 
     # Moneda: tomada del primer período (todas las empresas reportan
     # consistentemente en una sola moneda a lo largo del tiempo).
