@@ -144,6 +144,8 @@ def to_csv(
         else:
             if not result.get("periods"):
                 raise ValueError("'result' no contiene 'periods'")
+            if ticker is None:
+                ticker = result.get("info", {}).get("ticker")
             _write_single_csv(writer, result["periods"], ticker)
 
     return filepath

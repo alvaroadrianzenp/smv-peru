@@ -428,7 +428,7 @@ def test_desde_greater_than_hasta_raises():
 
 
 def test_desde_no_entero_raises():
-    with pytest.raises(ValueError, match="enteros"):
+    with pytest.raises(ValueError, match="entero"):
         fetch_estados_financieros(
             "ALICORC1", desde="2023", hasta=2023, cache_dir=FIXTURES,
         )

@@ -427,14 +427,10 @@ _VALID_TIPO_CODES = frozenset({"C", "I"})
 
 
 def _soap_envelope(operacion: str, ejercicio: int, periodo: str, tipo: str) -> bytes:
-    # Validación estricta de los valores que se interpolan en el body. Hoy
-    # todos los call sites ya pasan valores válidos, pero estos asserts
-    # blindan contra cambios futuros que añadan parámetros string-libres
-    # (ticker, RPJ filtrable, etc.) y eviten inyección XML/SOAP.
+    # Defensa contra inyección XML/SOAP si futuros call-sites pasan strings libres.
     if operacion not in _VALID_OPERACIONES:
         raise ValueError(f"operacion inválida: {operacion!r}")
-    if not isinstance(ejercicio, int) or not (1990 <= ejercicio <= 2100):
-        raise ValueError(f"ejercicio fuera de rango razonable: {ejercicio!r}")
+    _validate_fiscal_year(ejercicio, "ejercicio")
     if periodo not in _VALID_PERIODOS:
         raise ValueError(f"periodo inválido: {periodo!r}")
     if tipo not in _VALID_TIPO_CODES:
@@ -543,22 +539,15 @@ def _call_smv(operacion: str, ejercicio: int, periodo: str, tipo: str,
         return None
 
     cache_dir.mkdir(parents=True, exist_ok=True)
-    # Escritura atómica: write-to-temp + os.replace. Sin esto, dos procesos
-    # corriendo fetch_multi en paralelo pueden ver un archivo a medio
-    # escribir y disparar el JSONDecodeError del path de "cache corrupto"
-    # (benigno pero ruidoso en logs).
+    # Escritura atómica: write-to-temp + os.replace evita que otros procesos
+    # lean un archivo a medio escribir cuando comparten cache_dir.
     tmp_path = cache_gz.with_suffix(cache_gz.suffix + ".tmp")
     try:
         with gzip.open(tmp_path, 'wt', encoding='utf-8') as f:
             json.dump(data, f)
         os.replace(tmp_path, cache_gz)
     except OSError:
-        # Limpiar tmp si replace falló (disco lleno, permisos, etc).
-        if tmp_path.exists():
-            try:
-                tmp_path.unlink()
-            except OSError:
-                pass
+        tmp_path.unlink(missing_ok=True)
         raise
     logger.info(f"SMV {operacion} {ejercicio} {tipo} P={periodo}: {len(data)} filas, cacheado (gzip)")
     return data
@@ -679,6 +668,24 @@ def _safe_div(num, den):
     if num is None or den is None or den == 0:
         return None
     return num / den
+
+
+def _safe_div_abs(num, den):
+    """Igual que _safe_div pero usa abs(num). Convención para ratios donde el
+    numerador puede venir con signo natural negativo (dividendos, intereses,
+    capex) pero queremos el ratio siempre positivo."""
+    if num is None:
+        return None
+    return _safe_div(abs(num), den)
+
+
+def _validate_fiscal_year(value, name: str) -> None:
+    """Levanta ValueError si value no es un int en [1990, 2100]. SMV no
+    publica datos antes de 1999 y un año >2100 es claramente erróneo."""
+    if not isinstance(value, int) or not (1990 <= value <= 2100):
+        raise ValueError(
+            f"{name} debe ser un entero entre 1990 y 2100, recibido: {value!r}"
+        )
 
 
 def _extract_raw_accounts(rows: list[dict],
@@ -948,10 +955,7 @@ def _map_period_2d(rpj: str, pnl, bal, flow, fiscal_year: int,
     period["dividends_paid"] = period["dividends_paid_fin"]
     period["taxes_paid"] = period["taxes_paid_op"]
 
-    # payout_ratio se calcula en post-pass con lag T-1 (convención peruana:
-    # la JGA aprueba distribución sobre utilidades del ejercicio cerrado
-    # anterior). Anuales: _apply_payout_lagged_annual. Trimestrales LTM:
-    # _apply_ltm_2d.
+    # payout_ratio se calcula en post-pass con lag T-1 (convención JGA).
     period["payout_ratio"] = None
 
     capex_ppe = period["capex_ppe"] or 0
@@ -1230,6 +1234,23 @@ def _ltm_sum(window: list[dict], field: str):
     return sum(vals)
 
 
+def _payout_lagged_ltm(by_key: dict, year: int, quarter: int, ltm_div):
+    """payout_ratio LTM con lag T-1 (convención peruana JGA).
+
+    Numerador: dividendos LTM ya calculados por el caller (`ltm_div`).
+    Denominador: NI LTM lagged = suma del net_income sobre los 4 trimestres
+    que terminan 4Q antes del trimestre actual. Para T=Q4 año Y, esto
+    coincide con el NI anual del año Y-1 — la versión rolling de la
+    fórmula anual.
+
+    Devuelve None si falta cualquier trimestre lagged en `by_key`.
+    """
+    prev_lagged = [by_key.get(_quarter_offset(year, quarter, i)) for i in (4, 5, 6, 7)]
+    if any(p is None for p in prev_lagged):
+        return None
+    return _safe_div_abs(ltm_div, _ltm_sum(prev_lagged, "net_income"))
+
+
 _LTM_FIELDS_2D = (
     # Rentabilidad
     "roe", "roic", "roa",
@@ -1330,16 +1351,8 @@ def _apply_ltm_2d(periods: list[dict]) -> None:
         p["fcf_to_debt"] = _safe_div(ltm_fcf, total_debt_now or None)
 
         # Política de capital. payout: dividendos LTM (T) / NI LTM lagged
-        # (4 trimestres antes — ejercicio cerrado anterior, convención
-        # peruana de la JGA). Si falta historia lagged, queda None.
-        prev_lagged_2d = [by_key.get(_quarter_offset(y, q, i)) for i in (4, 5, 6, 7)]
-        if any(pp is None for pp in prev_lagged_2d):
-            p["payout_ratio"] = None
-        else:
-            ltm_ni_lagged = _ltm_sum(prev_lagged_2d, "net_income")
-            p["payout_ratio"] = _safe_div(
-                abs(ltm_div) if ltm_div is not None else None, ltm_ni_lagged
-            )
+        # (convención peruana JGA — ver _payout_lagged_ltm).
+        p["payout_ratio"] = _payout_lagged_ltm(by_key, y, q, ltm_div)
         p["dividend_coverage_fcf"] = _safe_div(
             ltm_fcf,
             abs(ltm_div) if ltm_div is not None else None,
@@ -1398,17 +1411,7 @@ def _apply_ltm_2f(periods: list[dict]) -> None:
             p["cost_of_risk"] = None
         p["roa"] = _safe_div(ltm_ni, avg_assets)
         p["roe"] = _safe_div(ltm_ni, avg_equity)
-        # payout: dividendos LTM (T) / NI LTM lagged (4 trimestres antes —
-        # ejercicio cerrado anterior, convención peruana). Si falta historia
-        # lagged, queda None.
-        prev_lagged_2f = [by_key.get(_quarter_offset(y, q, i)) for i in (4, 5, 6, 7)]
-        if any(pp is None for pp in prev_lagged_2f):
-            p["payout_ratio"] = None
-        else:
-            ltm_ni_lagged = _ltm_sum(prev_lagged_2f, "net_income")
-            p["payout_ratio"] = _safe_div(
-                abs(ltm_div) if ltm_div is not None else None, ltm_ni_lagged
-            )
+        p["payout_ratio"] = _payout_lagged_ltm(by_key, y, q, ltm_div)
 
 
 def _apply_payout_lagged_annual(periods: list[dict]) -> None:
@@ -1429,12 +1432,8 @@ def _apply_payout_lagged_annual(periods: list[dict]) -> None:
         if prev is None:
             p["payout_ratio"] = None
             continue
-        ni_prev = prev.get("net_income")
-        div_t = p.get("dividends_paid")
-        p["payout_ratio"] = _safe_div(
-            abs(div_t) if div_t is not None else None,
-            ni_prev,
-        )
+        p["payout_ratio"] = _safe_div_abs(p.get("dividends_paid"),
+                                          prev.get("net_income"))
 
 
 def set_dna(result: dict, dna) -> dict:
@@ -1577,16 +1576,8 @@ def fetch_eeff(
         raise ValueError(
             f"periodicidad debe ser 'anual' o 'trimestral', recibido: {periodicidad!r}"
         )
-    if not isinstance(desde, int) or not isinstance(hasta, int):
-        raise ValueError(
-            f"desde y hasta deben ser enteros (años fiscales), recibido: "
-            f"desde={desde!r}, hasta={hasta!r}"
-        )
-    if not (1990 <= desde <= 2100) or not (1990 <= hasta <= 2100):
-        raise ValueError(
-            f"desde y hasta deben estar entre 1990 y 2100 (rango razonable "
-            f"para SMV), recibido: desde={desde}, hasta={hasta}"
-        )
+    _validate_fiscal_year(desde, "desde")
+    _validate_fiscal_year(hasta, "hasta")
     if desde > hasta:
         raise ValueError(f"desde ({desde}) no puede ser mayor que hasta ({hasta})")
     if max_workers < 1 or max_workers > MAX_WORKERS_LIMIT:
@@ -1630,11 +1621,14 @@ def fetch_eeff(
                 calls_needed.add((OP_FLOW, y, str(int(p) - 1), tipo_code))
 
     # ---- Fase 2: descargar en paralelo (o serial si max_workers=1) -------
-    # Verificar cuántos archivos están en cache para informar al usuario
-    cached_count = sum(
-        1 for (op, year, period, t) in calls_needed
-        if (cache_dir / f"{op}_{year}_{t}_{period}.json").exists()
-    )
+    # Cuenta archivos cacheados para informar al usuario. Acepta tanto el
+    # formato actual (.json.gz) como el legacy (.json).
+    def _is_cached(op, year, period, t):
+        base = cache_dir / f"{op}_{year}_{t}_{period}"
+        return base.with_suffix(".json.gz").exists() or \
+            base.with_suffix(".json").exists()
+
+    cached_count = sum(1 for call in calls_needed if _is_cached(*call))
     if cached_count < len(calls_needed):
         logger.info(
             f"smv-peru: {len(calls_needed)} llamadas SOAP planificadas, "
@@ -1693,19 +1687,14 @@ def fetch_eeff(
     # en paralelo. Cuando un año anual tiene PNL+Flow C pero no Balance C, el
     # Balance Q4 C es estructuralmente idéntico al cierre anual (stock) y
     # mantiene la consistencia "Consolidado". Caso real: BBVA 2022.
-    if tipo_code == "C":
+    if tipo_code == "C" and "A" in periodos:
         fallback_calls: set[tuple[str, int, str, str]] = set()
         for y_ in range(desde, hasta + 1):
-            for p_ in periodos:
-                pnl_c = results.get((OP_PNL, y_, p_, "C"))
-                bal_c = results.get((OP_BAL, y_, p_, "C"))
-                if _has_rpj_data(pnl_c, rpj) and _has_rpj_data(bal_c, rpj):
-                    continue
-                # Q4 fallback: solo si es anual y solo falta Balance C
-                if (p_ == "A" and _has_rpj_data(pnl_c, rpj)
-                        and not _has_rpj_data(bal_c, rpj)):
-                    fallback_calls.add((OP_BAL, y_, "4", "C"))
-        # Quitar las que ya tenemos en results
+            pnl_c = results.get((OP_PNL, y_, "A", "C"))
+            bal_c = results.get((OP_BAL, y_, "A", "C"))
+            # Q4 fallback: PNL anual presente pero Balance anual ausente.
+            if (_has_rpj_data(pnl_c, rpj) and not _has_rpj_data(bal_c, rpj)):
+                fallback_calls.add((OP_BAL, y_, "4", "C"))
         fallback_calls -= set(results.keys())
 
         if fallback_calls:
@@ -1743,15 +1732,8 @@ def fetch_eeff(
                     tick2()
 
     # ---- Fase 3: procesar usando resultados ya descargados ----------------
-    # Política de homogeneidad: la serie devuelta nunca mezcla Consolidado con
-    # Individual. Si pidieron `tipo="consolidado"` y un período no tiene
-    # Consolidado disponible (incluso tras intentar el sustituto Balance Q4),
-    # ese período se OMITE — no se rellena con Individual. Mezclar tipos
-    # distorsiona la lectura del reporte (ej. matriz consolidante vs holding
-    # sola). Si ningún período del rango tiene Consolidado, la cascada
-    # full-series al final cae a Individual completo (toda la serie homogénea
-    # en I). Caso BBVA 2022 (PNL+Flow C anual OK, Balance C anual ausente)
-    # sigue cubierto por la cascada Q4 abajo, que mantiene "Consolidado".
+    # La serie devuelta nunca mezcla Consolidado con Individual: períodos
+    # sin C disponible se omiten en lugar de rellenarse con I.
     periods_data = []
     for y in range(desde, hasta + 1):
         cf_is_ytd_c = False
@@ -1767,12 +1749,13 @@ def fetch_eeff(
             balance_substituted_from_q4 = False
 
             # Cascada Q4 → Anual (solo Consolidado): si solo falta Balance C
-            # anual y Balance Q4 C existe, usar Q4 como sustituto. El balance
-            # es stock: el cierre del Q4 equivale al cierre anual (validado
-            # contra múltiples empresas). Mantiene "Consolidado".
+            # anual y Balance Q4 C existe, usar Q4 como sustituto. El Q4 ya
+            # se descargó en Fase 2.5 cuando aplicaba; aquí solo se lee de
+            # `results`. Stock: el cierre del Q4 equivale al cierre anual
+            # (validado contra múltiples empresas). Mantiene "Consolidado".
             if (tipo_code == "C" and not consolidated_ok and p == "A"
                     and _has_rpj_data(pnl, rpj) and not _has_rpj_data(bal, rpj)):
-                bal_q4 = _call_smv(OP_BAL, y, "4", "C", cache_dir)
+                bal_q4 = results.get((OP_BAL, y, "4", "C"))
                 if _has_rpj_data(bal_q4, rpj):
                     bal = bal_q4
                     consolidated_ok = True
