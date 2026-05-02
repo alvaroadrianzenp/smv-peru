@@ -4,7 +4,7 @@ Librería Python para acceder a los datos financieros públicos publicados por l
 
 ## Estado
 
-En desarrollo inicial. Aún no publicado en PyPI.
+Pre-release. Listo para publicar **0.1.0** en PyPI. Ver [`CHANGELOG.md`](CHANGELOG.md).
 
 **Cobertura histórica:** SMV publica EEFF desde **1999** para empresas como Alicorp (verificado empíricamente). Esto da ~27 años de historia comparable. Empresas más nuevas (PORTINC1 = Chancay 2024) tienen cobertura desde su listado.
 
@@ -125,13 +125,140 @@ to_csv(datos, "alicorp_2019_2024.csv", ticker="ALICORC1")
 
 Solo usa `csv` de stdlib. Universal: abre en Excel, Numbers, Google Sheets, scripts. Soporta single y multi-empresa.
 
+## Ejemplos de uso
+
+Casos típicos de análisis financiero con la librería.
+
+### Descargar un sector entero a Excel
+
+```python
+from smv_peru import fetch_multi, to_excel
+
+# Las 3 cementeras del catálogo, anual 2020-2024
+cementeras = fetch_multi(
+    ["CPACASC1", "UNACEMC1", "YURAC1"],
+    desde=2020, hasta=2024,
+    periodicidad="anual",
+)
+to_excel(cementeras, "cementeras_2020_2024.xlsx")
+```
+
+El Excel resultante tiene una hoja por cementera con secciones P&L, Balance, Cash Flow y métricas en 7 categorías. El header de cada hoja muestra el nombre amigable de la empresa automáticamente (auto-detectado desde `info["ticker"]`).
+
+### Comparar bancos peruanos
+
+```python
+from smv_peru import fetch_multi, to_excel
+
+bancos = fetch_multi(
+    ["BBVAC1", "CREDITC1", "INTERBC1", "SCOTIAC1"],
+    desde=2020, hasta=2024,
+    periodicidad="anual",
+)
+to_excel(bancos, "bancos_peruanos.xlsx")
+```
+
+Cada hoja trae métricas bancarias específicas (NIM, NPL, ROE, ROA, eficiencia operativa, costo del riesgo) ya calculadas con promedios usando `Monto2`.
+
+### Tendencia anual de payout_ratio
+
+```python
+from smv_peru import fetch_eeff
+
+# Pide 1 año extra atrás para que el primer payout se calcule (necesita T-1)
+datos = fetch_eeff("ALICORC1", desde=2019, hasta=2024, periodicidad="anual")
+
+print(f"{'Año':<6} {'Net Income':>15} {'Dividendos':>15} {'Payout':>8}")
+for p in datos["periods"]:
+    ni = p['net_income']
+    div = p.get('dividends_paid')
+    payout = p['payout_ratio']
+    payout_str = f"{payout:.1%}" if payout is not None else "—"
+    print(f"{p['fiscal_year']:<6} {ni:>15,.0f} "
+          f"{(div or 0):>15,.0f} {payout_str:>8}")
+```
+
+El año 2019 mostrará `payout=—` porque no hay 2018 en la serie. Los siguientes sí se calculan: dividendos del año / utilidad del año anterior (convención JGA).
+
+### Una sola empresa con LTM trimestral
+
+```python
+from smv_peru import fetch_eeff, to_excel
+
+# Pide al menos 8 trimestres de historia para que las LTM se calculen completas
+# (las métricas LTM en trimestrales necesitan 4 trimestres actuales + 4 lagged)
+datos = fetch_eeff(
+    "BACKUSI1", desde=2022, hasta=2024,
+    periodicidad="trimestral",
+)
+to_excel(datos, "backus_trimestral.xlsx")
+```
+
+En el Excel resultante, los primeros trimestres mostrarán `—` en métricas LTM (ROE, debt_to_ebitda, payout, etc.) por falta de historia. Desde Q1 2024 en adelante todas las LTM están pobladas.
+
+### Inyectar D&A externo cuando SMV no lo expone
+
+```python
+from smv_peru import fetch_eeff, set_dna, to_excel
+
+# Alicorp publica con CF directo → SMV no expone D&A → ebitda=None
+datos = fetch_eeff("ALICORC1", desde=2022, hasta=2024)
+
+# D&A en miles de soles, desde notas a EEFF auditados
+set_dna(datos, {2022: 420_000, 2023: 440_000, 2024: 460_000})
+
+# Ahora ebitda, ebitda_margin, debt_to_ebitda están calculados
+for p in datos["periods"]:
+    print(f"{p['fiscal_year']}: EBITDA={p['ebitda']:,.0f}, "
+          f"D/EBITDA={p['debt_to_ebitda']:.2f}x")
+
+to_excel(datos, "alicorp_con_ebitda.xlsx")
+```
+
+### Ver los períodos faltantes (gaps de SMV)
+
+```python
+from smv_peru import fetch_eeff
+
+# Datos hasta 2026 — al momento de la consulta, Q2-Q4 2026 aún no publicados
+datos = fetch_eeff("UNACEMC1", desde=2024, hasta=2026, periodicidad="trimestral")
+
+print(f"Pedidos: {datos['info']['periods_requested']}")
+print(f"Recibidos: {datos['info']['periods_returned']}")
+print(f"Faltantes: {datos['info']['periods_missing']}")
+```
+
+`periods_missing` también incluye los períodos donde se pidió Consolidado pero solo había Individual disponible (omitidos por la política de homogeneidad).
+
+### Auditar el mapeo amigable → código SMV
+
+```python
+from smv_peru import FIELDS_TO_CODES_2D, FIELDS_TO_CODES_2F
+
+print(f"cash (industrial): {FIELDS_TO_CODES_2D['cash']}")          # "1D0109"
+print(f"cash (banco):      {FIELDS_TO_CODES_2F['cash']}")          # "1F0101"
+print(f"loans_st (banco):  {FIELDS_TO_CODES_2F['loans_st']}")      # "1F0111"
+```
+
+Útil para verificar contra los PDFs auditados oficiales o el Manual SMV/CONASEV.
+
 ## Tickers soportados
 
 La librería despacha automáticamente al esquema correcto según el ticker:
 - **Esquema 2D** (industriales / NIIF estándar): Alicorp, UNACEM, Buenaventura, etc.
 - **Esquema 2F** (bancos): BBVA Perú, BCP, Scotiabank Perú.
 
-Cada período del output expone una key `"schema"` (`"2D"` o `"2F"`) para que sepas qué set de campos esperar. Algunas empresas reportan en modo **Consolidado** (matrices con subsidiarias) y otras solo en **Individual** (subsidiarias de matrices extranjeras como Cerro Verde, PLUZ Energía, Nexa). La librería prueba primero Consolidado y cae automáticamente a Individual si no hay datos.
+Cada período del output expone una key `"schema"` (`"2D"` o `"2F"`) para que sepas qué set de campos esperar. Algunas empresas reportan en modo **Consolidado** (matrices con subsidiarias) y otras solo en **Individual** (subsidiarias de matrices extranjeras como Cerro Verde, PLUZ Energía, Interbank).
+
+**Política de homogeneidad C/I**: la serie devuelta nunca mezcla Consolidado con Individual. Las reglas son:
+
+1. Si el ticker tiene Consolidado para todo el rango, se devuelve toda la serie en C.
+2. Si el ticker NO aparece en Consolidado para ningún período del rango, se devuelve toda la serie en Individual (early-exit paralelizado, ~10s en cold cache).
+3. Si algunos períodos tienen C y otros no (caso típico: trimestre más reciente aún sin publicar), los períodos sin C se **omiten** — no se rellenan con Individual. Aparecen en `info["periods_missing"]`.
+
+Mezclar tipos en la misma serie distorsiona la lectura (la matriz consolidante puede tener Revenue ~10x mayor que la holding sola), por eso preferimos serie homogénea aunque sea parcial.
+
+**Caso BBVA 2022**: cuando solo falta el Balance Consolidado anual y el Q4 Consolidado sí existe, la librería usa Q4 como sustituto del cierre anual (stock idéntico). Mantiene `tipo="consolidado"` y marca `period["balance_source"] = "Q4_consolidado"` para auditoría.
 
 | Ticker | Empresa | Sector |
 |---|---|---|
@@ -247,7 +374,7 @@ SMV envía en cada respuesta `Monto1` (período actual) y `Monto2` (comparativo 
 | `interest_income`, `interest_expense` | Ingresos y gastos financieros. |
 | `pretax_income`, `income_tax`, `net_income` | Resultado antes de impuestos, impuesto a las ganancias y utilidad neta. |
 | `eps` | Utilidad básica por acción ordinaria, en unidades base. |
-| `ebitda` | Aproximado a `operating_income` (D&A no expuesto por la API SMV). |
+| `ebitda` | `operating_income + abs(dna)` cuando la empresa publica CF indirecto. `None` si no — ver sección [EBITDA y métricas de crédito](#ebitda-y-métricas-de-crédito-esquema-2d). |
 
 ### Estado de Situación Financiera (Balance)
 
@@ -290,10 +417,12 @@ SMV envía en cada respuesta `Monto1` (período actual) y `Monto2` (comparativo 
 | `net_debt` | `total_debt - cash` |
 | `interest_coverage` | `operating_income / \|interest_expense\|` |
 | `effective_tax_rate` | `\|income_tax\| / pretax_income` |
-| `payout_ratio` | `dividends_paid / net_income` |
+| `payout_ratio` | `abs(dividends_paid_T) / net_income_(T-1)`. Convención peruana JGA — ver nota abajo. `None` para el primer período del rango si no hay T-1. |
 | `capex_intensity` | `capex_total / revenue` |
 | `roe` | `net_income / equity` |
 | `roic` | `net_income / (equity + total_debt)` |
+
+> **Nota sobre `payout_ratio`**: la Ley General de Sociedades del Perú exige que la JGA apruebe la distribución de dividendos sobre utilidades del **ejercicio cerrado anterior**. Por eso los dividendos pagados en T se miden contra el net income de T-1, no de T. Si pides `desde=2024 hasta=2024`, el `payout_ratio` de 2024 será `None` (no hay 2023 en la serie); si pides `desde=2023 hasta=2024`, sí se calcula. Para trimestrales LTM la convención se mantiene: el denominador es la suma de los 4 trimestres que terminan 4Q antes de T.
 
 ### EBITDA y métricas de crédito (esquema 2D)
 
@@ -392,7 +521,7 @@ set_dna(datos, {2022: 420_000, 2023: 440_000, 2024: 460_000})
 | `cost_of_risk` | `\|loan_loss_provisions\| / avg(loans_net)` | Costo del riesgo crediticio. |
 | `roa` | `net_income / avg(total_assets)` | Anualizado. |
 | `roe` | `net_income / avg(equity)` | Anualizado. |
-| `payout_ratio` | `dividends_paid / net_income` | |
+| `payout_ratio` | `abs(dividends_paid_T) / net_income_(T-1)` | Convención JGA peruana, igual que en 2D. |
 | `interest_income_yoy`, `net_income_yoy`, `loans_yoy`, `deposits_yoy`, `equity_yoy` | crecimiento YoY | Calculados con `Monto2`. |
 
 ### Limitaciones del esquema 2F
@@ -437,27 +566,35 @@ Los **derivados** (márgenes, ratios, NIM, NPL, etc.) no están en estos dicts p
 Este proyecto usa [uv](https://github.com/astral-sh/uv) como gestor de entornos y dependencias.
 
 ```bash
-uv sync                          # crea el venv e instala el paquete editable
-uv run pytest                    # corre los tests
-uv run python                    # entra a un REPL con el paquete disponible
-uv run python examples/demo.py   # corre el demo (descarga datos reales)
+uv sync                              # crea el venv e instala el paquete editable
+uv run pytest                        # corre los 192 tests con fixtures sintéticos
+uv run python                        # entra a un REPL con el paquete disponible
+uv run python examples/demo.py       # corre el demo (descarga datos reales)
+uv run python scripts/smoke_test.py  # smoke test multi-empresa contra SMV real
 ```
 
 El [demo](examples/demo.py) muestra los principales casos de uso: descarga anual y trimestral, esquemas 2D y 2F, métricas derivadas, `raw_accounts`, YoY growth y auditoría del mapeo amigable → código SMV.
+
+El [smoke test](scripts/smoke_test.py) ejercita los 27 tickers del catálogo contra el web service real para detectar regresiones que los unitarios con fixtures no pillan. Útil antes de cada release. Cold cache ~5 min, warm <30 s.
 
 ## Roadmap
 
 - [x] Estructura inicial de la librería.
 - [x] API pública documentada con docstrings.
-- [x] Tests unitarios y de integración con fixtures.
+- [x] Tests unitarios y de integración con fixtures (192 verdes en ~0.3 s).
 - [x] Cache configurable (parámetro, env var, o user cache dir del SO).
 - [x] Soporte para periodicidad anual y trimestral.
-- [x] Selección explícita de estados consolidados o individuales.
-- [x] Catálogo de tickers BVL → SMV.
-- [x] Cuentas extendidas (~50 campos amigables) + métricas derivadas (márgenes, ratios) + `raw_accounts` para cuentas no expuestas.
-- [ ] Soporte para esquema 2F (bancos: BAP, BCP, BBVA, Interbank).
+- [x] Selección explícita de estados consolidados o individuales + política de homogeneidad.
+- [x] Catálogo de tickers BVL → SMV (27 tickers).
+- [x] Cuentas extendidas (~95 campos amigables 2D, 50+ 2F) + métricas derivadas en 7 categorías + `raw_accounts` para cuentas no expuestas.
+- [x] Soporte para esquema 2F (bancos: BAP, BBVAC1, CREDITC1, IFS, INTERBC1, SCOTIAC1).
+- [x] LTM (Last Twelve Months) automáticas en trimestrales.
+- [x] `payout_ratio` con lag T-1 (convención JGA peruana).
+- [x] Hardening de seguridad (TLS, formula injection, validación de inputs).
+- [x] Smoke test multi-empresa (`scripts/smoke_test.py`).
 - [ ] Repo en GitHub público + GitHub Actions (CI).
 - [ ] Publicar `0.1.0` en PyPI.
+- [ ] (0.2+) Soporte para esquema 2E (aseguradoras: Pacífico, Rímac).
 - [ ] (Más adelante) API web HTTP encima de esta librería, como módulo opcional.
 
 ## Disclaimer
