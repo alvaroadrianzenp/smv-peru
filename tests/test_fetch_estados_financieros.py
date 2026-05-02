@@ -206,6 +206,43 @@ def test_alicorp_2023_derived_metrics_make_sense():
     assert p["roic"] < p["roe"]
 
 
+def test_alicorp_2023_new_metrics_present_and_consistent():
+    """Las métricas nuevas (categorías Liquidez/Solvencia/Cobertura/Cash Flow)
+    se calculan y mantienen relaciones lógicas básicas."""
+    p = fetch_estados_financieros(
+        "ALICORC1", desde=2023, hasta=2023, cache_dir=FIXTURES,
+    )["periods"][0]
+
+    # Liquidez: cash_ratio < quick_ratio < current_ratio (cada uno excluye más activos)
+    assert p["cash_ratio"] is not None
+    assert p["cash_ratio"] < p["quick_ratio"]
+    assert p["quick_ratio"] < p["current_ratio"]
+
+    # Solvencia
+    assert p["debt_to_equity"] is not None
+    assert p["equity_ratio"] is not None
+    assert 0 < p["equity_ratio"] < 1  # equity es fracción de assets
+
+    # Rentabilidad: roa < roe (apalancamiento amplifica retornos para accionistas)
+    assert p["roa"] is not None
+    assert p["roe"] is not None
+    assert p["roa"] < p["roe"]
+
+    # Cash flow margins existen y son consistentes
+    assert p["ocf_margin"] is not None
+    assert p["fcf_margin"] is not None
+    # FCF < OCF porque FCF descuenta capex
+    assert p["fcf_margin"] < p["ocf_margin"]
+    assert p["cash_conversion"] is not None
+    assert p["fcf_to_net_income"] is not None
+
+    # Cobertura: cash_interest_coverage existe (Alicorp paga intereses)
+    assert p["cash_interest_coverage"] is not None
+
+    # Política de capital
+    assert p["dividend_coverage_fcf"] is not None  # Alicorp paga dividendos
+
+
 def test_alicorp_2024_subsidiaries_purchased():
     """Alicorp 2024: SMV publica `3D0219` = -517,616 (compra menor de
     subsidiarias). Validamos que el campo amigable lo expone con su signo

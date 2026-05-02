@@ -827,6 +827,12 @@ def _map_period_2d(rpj: str, pnl, bal, flow, fiscal_year: int,
     if period["cash"] is not None and period["accounts_receivable"] is not None:
         quick_num = period["cash"] + period["accounts_receivable"]
     period["quick_ratio"] = _safe_div(quick_num, period["current_liab"])
+    # Cash ratio: liquidez más estricta (solo efectivo / pasivos corrientes)
+    period["cash_ratio"] = _safe_div(period["cash"], period["current_liab"])
+
+    # Solvencia adicional (stocks/stocks, sin necesidad de LTM)
+    period["debt_to_equity"] = _safe_div(total_debt or None, equity)
+    period["equity_ratio"] = _safe_div(equity, period["total_assets"])
 
     # Cobertura de intereses (Times Interest Earned, EBIT-based)
     if period["interest_expense"] is not None and period["interest_expense"] != 0:
@@ -882,7 +888,7 @@ def _map_period_2d(rpj: str, pnl, bal, flow, fiscal_year: int,
     else:
         period["fcf"] = op_cf + capex_total_signed
 
-    # ROE y ROIC con promedios reales (Monto2)
+    # ROE, ROIC, ROA con promedios reales (Monto2)
     avg_equity = _avg(equity, equity_prior)
     period["roe"] = _safe_div(period["net_income"], avg_equity)
     if equity_prior is not None and (debt_st_prior is not None or debt_lt_prior is not None):
@@ -891,6 +897,34 @@ def _map_period_2d(rpj: str, pnl, bal, flow, fiscal_year: int,
     else:
         avg_ic = equity + total_debt
     period["roic"] = _safe_div(period["net_income"], avg_ic)
+    # ROA con avg_assets si hay total_assets prior; si no, usa el actual
+    total_assets_prior = (
+        (amt_prior("current_assets", bal_e) or 0)
+        + (amt_prior("noncurrent_assets", bal_e) or 0)
+    ) or None
+    avg_assets = _avg(period["total_assets"], total_assets_prior)
+    period["roa"] = _safe_div(period["net_income"], avg_assets)
+
+    # Métricas de Cash Flow (todas son flujo/flujo o flujo/stock; el post-pass
+    # LTM las recalcula correctamente para datos trimestrales).
+    period["ocf_margin"] = _safe_div(op_cf, revenue)
+    period["fcf_margin"] = _safe_div(period["fcf"], revenue)
+    period["cash_conversion"] = _safe_div(op_cf, period["net_income"])
+    period["fcf_to_net_income"] = _safe_div(period["fcf"], period["net_income"])
+    period["cfo_to_debt"] = _safe_div(op_cf, total_debt or None)
+    period["fcf_to_debt"] = _safe_div(period["fcf"], total_debt or None)
+    period["capex_to_dna"] = _safe_div(
+        abs(period["capex_total"]) if period["capex_total"] else None,
+        abs(dna_v) if dna_v else None,
+    )
+    period["dividend_coverage_fcf"] = _safe_div(
+        period["fcf"],
+        abs(period["dividends_paid"]) if period["dividends_paid"] else None,
+    )
+    period["cash_interest_coverage"] = _safe_div(
+        op_cf,
+        abs(period["interest_paid"]) if period["interest_paid"] else None,
+    )
 
     # YoY growth
     period["revenue_yoy"] = _yoy(revenue, revenue_prior)
@@ -1118,10 +1152,18 @@ def _ltm_sum(window: list[dict], field: str):
 
 
 _LTM_FIELDS_2D = (
-    "roe", "roic",
-    "interest_coverage", "interest_coverage_ebitda",
+    # Rentabilidad
+    "roe", "roic", "roa",
+    # Cobertura
+    "interest_coverage", "interest_coverage_ebitda", "cash_interest_coverage",
+    # Solvencia (flujo/stock)
     "debt_to_ebitda", "net_debt_to_ebitda",
-    "payout_ratio", "capex_intensity",
+    "cfo_to_debt", "fcf_to_debt",
+    # Política de capital
+    "payout_ratio", "dividend_coverage_fcf",
+    # Cash flow (flujo/flujo)
+    "ocf_margin", "fcf_margin", "cash_conversion", "fcf_to_net_income",
+    "capex_intensity", "capex_to_dna",
 )
 
 _LTM_FIELDS_2F = ("nim", "cost_of_risk", "roa", "roe", "payout_ratio")
@@ -1162,17 +1204,25 @@ def _apply_ltm_2d(periods: list[dict]) -> None:
         ltm_ebitda = _ltm_sum(window, "ebitda")
         ltm_capex = _ltm_sum(window, "capex_total")
         ltm_div = _ltm_sum(window, "dividends_paid")
+        ltm_dna = _ltm_sum(window, "dna")
+        ltm_ocf = _ltm_sum(window, "operating_cf")
+        ltm_fcf = _ltm_sum(window, "fcf")
+        ltm_int_paid = _ltm_sum(window, "interest_paid")
 
         avg_equity = _avg(p.get("equity"), stock_4q_ago.get("equity"))
+        avg_assets = _avg(p.get("total_assets"), stock_4q_ago.get("total_assets"))
         ic_now = (p.get("equity") or 0) + (p.get("total_debt") or 0)
         ic_prev = (stock_4q_ago.get("equity") or 0) + (stock_4q_ago.get("total_debt") or 0)
         avg_ic = _avg(ic_now, ic_prev)
         total_debt_now = p.get("total_debt")
         net_debt_now = p.get("net_debt")
 
+        # Rentabilidad
         p["roe"] = _safe_div(ltm_ni, avg_equity)
         p["roic"] = _safe_div(ltm_ni, avg_ic)
+        p["roa"] = _safe_div(ltm_ni, avg_assets)
 
+        # Cobertura
         if ltm_ie is not None and ltm_ie != 0:
             p["interest_coverage"] = _safe_div(ltm_oi, abs(ltm_ie))
         else:
@@ -1183,6 +1233,12 @@ def _apply_ltm_2d(periods: list[dict]) -> None:
         else:
             p["interest_coverage_ebitda"] = None
 
+        p["cash_interest_coverage"] = _safe_div(
+            ltm_ocf,
+            abs(ltm_int_paid) if ltm_int_paid is not None else None,
+        )
+
+        # Solvencia / apalancamiento
         p["debt_to_ebitda"] = (
             total_debt_now / ltm_ebitda
             if (ltm_ebitda and total_debt_now is not None) else None
@@ -1191,11 +1247,29 @@ def _apply_ltm_2d(periods: list[dict]) -> None:
             net_debt_now / ltm_ebitda
             if (ltm_ebitda and net_debt_now is not None) else None
         )
+        p["cfo_to_debt"] = _safe_div(ltm_ocf, total_debt_now or None)
+        p["fcf_to_debt"] = _safe_div(ltm_fcf, total_debt_now or None)
+
+        # Política de capital
         p["payout_ratio"] = _safe_div(
             abs(ltm_div) if ltm_div is not None else None, ltm_ni
         )
+        p["dividend_coverage_fcf"] = _safe_div(
+            ltm_fcf,
+            abs(ltm_div) if ltm_div is not None else None,
+        )
+
+        # Cash flow margins / quality
+        p["ocf_margin"] = _safe_div(ltm_ocf, ltm_revenue)
+        p["fcf_margin"] = _safe_div(ltm_fcf, ltm_revenue)
+        p["cash_conversion"] = _safe_div(ltm_ocf, ltm_ni)
+        p["fcf_to_net_income"] = _safe_div(ltm_fcf, ltm_ni)
         p["capex_intensity"] = _safe_div(
             abs(ltm_capex) if ltm_capex is not None else None, ltm_revenue
+        )
+        p["capex_to_dna"] = _safe_div(
+            abs(ltm_capex) if ltm_capex is not None else None,
+            abs(ltm_dna) if ltm_dna is not None else None,
         )
 
 

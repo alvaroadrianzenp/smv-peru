@@ -54,4 +54,4 @@ def test_to_csv_2f_uses_banking_layout(tmp_path):
     out = to_csv(datos, tmp_path / "bbva.csv", ticker="BBVAC1")
     content = out.read_text(encoding="utf-8")
     assert "Interest income" in content
-    assert "RATIOS BANCARIOS" in content
+    assert "CALIDAD DE CARTERA" in content

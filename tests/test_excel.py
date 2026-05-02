@@ -95,10 +95,10 @@ def test_to_excel_2f_uses_banking_sections(tmp_path):
     # Header tiene moneda
     assert "Moneda" in str(ws["A2"].value)
 
-    # Debe aparecer "RATIOS BANCARIOS" como sección (sólo 2F los tiene)
+    # Debe aparecer "CALIDAD DE CARTERA" como sección (sólo 2F la tiene)
     found_banking = False
     for row in ws.iter_rows(min_row=7, values_only=True):
-        if row[0] and "RATIOS BANCARIOS" in str(row[0]):
+        if row[0] and "CALIDAD DE CARTERA" in str(row[0]):
             found_banking = True
             break
     assert found_banking
