@@ -1485,6 +1485,70 @@ def fetch_eeff(
                 cache_dir=cache_dir, max_workers=max_workers,
             )
 
+    # ---- Fase 2.5: pre-detectar calls de fallback Individual y bajarlas en
+    # paralelo. Si dejáramos que la cascada por-período las haga ad-hoc en
+    # fase 3, terminaríamos con N calls SOAP sincrónicas (caso conocido:
+    # ENGEPEC1 trimestral tiene 2024 C completo pero 2020-2023 vacío en C
+    # → 16 quarters × 3 calls = 48 calls serial = ~7 min). Aquí las
+    # acumulamos y las bajamos con el mismo executor paralelizado.
+    if tipo_code == "C":
+        fallback_calls: set[tuple[str, int, str, str]] = set()
+        for y_ in range(desde, hasta + 1):
+            for p_ in periodos:
+                pnl_c = results.get((OP_PNL, y_, p_, "C"))
+                bal_c = results.get((OP_BAL, y_, p_, "C"))
+                if _has_rpj_data(pnl_c, rpj) and _has_rpj_data(bal_c, rpj):
+                    continue
+                # Q4 fallback: solo si es anual y solo falta Balance C
+                if (p_ == "A" and _has_rpj_data(pnl_c, rpj)
+                        and not _has_rpj_data(bal_c, rpj)):
+                    fallback_calls.add((OP_BAL, y_, "4", "C"))
+                # Cascada Individual completa
+                fallback_calls.add((OP_PNL, y_, p_, "I"))
+                fallback_calls.add((OP_BAL, y_, p_, "I"))
+                fallback_calls.add((OP_FLOW, y_, p_, "I"))
+                if periodicidad == "trimestral":
+                    if p_ in ("2", "3", "4"):
+                        fallback_calls.add((OP_FLOW, y_, str(int(p_) - 1), "I"))
+                    fallback_calls.add((OP_FLOW, y_, "4", "I"))
+                    fallback_calls.add((OP_FLOW, y_, "A", "I"))
+        # Quitar las que ya tenemos en results
+        fallback_calls -= set(results.keys())
+
+        if fallback_calls:
+            logger.info(
+                f"smv-peru: {ticker} requiere {len(fallback_calls)} llamadas SOAP "
+                f"adicionales para cubrir fallbacks (Q4 / Individual)"
+            )
+            tick2 = _make_progress_writer(
+                len(fallback_calls), f"  {ticker} fallback"
+            )
+            if max_workers > 1 and len(fallback_calls) > 1:
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                workers = min(max_workers, len(fallback_calls))
+                with ThreadPoolExecutor(max_workers=workers) as ex:
+                    futures = {
+                        ex.submit(_call_smv, op_, y_, pp_, t_, cache_dir):
+                            (op_, y_, pp_, t_)
+                        for (op_, y_, pp_, t_) in fallback_calls
+                    }
+                    for fut in as_completed(futures):
+                        key = futures[fut]
+                        try:
+                            results[key] = fut.result()
+                        except Exception as e:
+                            logger.warning(
+                                f"Llamada SOAP de fallback falló para {key}: {e}"
+                            )
+                            results[key] = None
+                        tick2()
+            else:
+                for (op_, y_, pp_, t_) in fallback_calls:
+                    results[(op_, y_, pp_, t_)] = _call_smv(
+                        op_, y_, pp_, t_, cache_dir
+                    )
+                    tick2()
+
     # ---- Fase 3: procesar usando resultados ya descargados ----------------
     # Cascada por período (no por ticker entero): si Consolidado tiene PNL/Bal
     # incompletos para este RPJ en un año específico, intentamos Individual

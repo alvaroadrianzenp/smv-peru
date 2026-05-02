@@ -73,6 +73,10 @@ def test_bbva_2022_balance_anual_ausente_usa_q4_consolidado(tmp_path):
     _write_cache(tmp_path, "BalanceGeneral", 2022, "C", "4", [
         _row(rpj, "1F3306", 11_253_374),  # equity = patrimonio cierre Q4
     ])
+    # El pre-fetch acumula también las calls Individual del fallback;
+    # las definimos vacías para que no intenten SOAP real durante el test.
+    for op in ("GanciaPerdida", "BalanceGeneral", "FlujoEfectivo"):
+        _write_cache(tmp_path, op, 2022, "I", "A", [])
 
     result = fetch_eeff("BBVAC1", desde=2022, hasta=2022, periodicidad="anual",
                        cache_dir=tmp_path)
