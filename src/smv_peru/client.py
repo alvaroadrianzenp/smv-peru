@@ -518,8 +518,23 @@ def _call_smv(operacion: str, ejercicio: int, periodo: str, tipo: str,
         return None
 
     cache_dir.mkdir(parents=True, exist_ok=True)
-    with gzip.open(cache_gz, 'wt', encoding='utf-8') as f:
-        json.dump(data, f)
+    # Escritura atómica: write-to-temp + os.replace. Sin esto, dos procesos
+    # corriendo fetch_multi en paralelo pueden ver un archivo a medio
+    # escribir y disparar el JSONDecodeError del path de "cache corrupto"
+    # (benigno pero ruidoso en logs).
+    tmp_path = cache_gz.with_suffix(cache_gz.suffix + ".tmp")
+    try:
+        with gzip.open(tmp_path, 'wt', encoding='utf-8') as f:
+            json.dump(data, f)
+        os.replace(tmp_path, cache_gz)
+    except OSError:
+        # Limpiar tmp si replace falló (disco lleno, permisos, etc).
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+        raise
     logger.info(f"SMV {operacion} {ejercicio} {tipo} P={periodo}: {len(data)} filas, cacheado (gzip)")
     return data
 

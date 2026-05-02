@@ -435,6 +435,22 @@ def _populate_eeff_sheet(ws, periods: list[dict], ticker: str | None) -> None:
     ws.freeze_panes = ws.cell(row=HEADER_ROW + 1, column=FIRST_DATA_COL)
 
 
+# Caracteres con los que NO debe empezar una celda de texto: si comienza
+# con cualquiera de ellos, Excel/Numbers/Sheets lo interpreta como fórmula
+# al abrir el archivo. SMV no debería devolver descripciones así, pero un
+# MITM (o un cambio futuro del catálogo) podría inyectar una. Prefijar con
+# apóstrofe `'` neutraliza el vector — la celda se ve idéntica al usuario
+# pero la herramienta la trata como string literal.
+_FORMULA_PREFIX_CHARS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _safe_text(value):
+    """Sanea strings para Excel previniendo formula injection."""
+    if isinstance(value, str) and value.startswith(_FORMULA_PREFIX_CHARS):
+        return "'" + value
+    return value
+
+
 def _populate_raw_sheet(ws, periods: list[dict]) -> None:
     """Puebla una hoja con raw_accounts (códigos SMV + descripción + montos)."""
     bold = Font(bold=True)
@@ -459,8 +475,8 @@ def _populate_raw_sheet(ws, periods: list[dict]) -> None:
     ws.cell(row=1, column=2).fill = header_fill
 
     for r, (code, nombre) in enumerate(sorted(all_codes.items()), start=2):
-        ws.cell(row=r, column=1, value=code)
-        ws.cell(row=r, column=2, value=nombre)
+        ws.cell(row=r, column=1, value=_safe_text(code))
+        ws.cell(row=r, column=2, value=_safe_text(nombre))
         for i, p in enumerate(periods):
             if code in p.get("raw_accounts", {}):
                 cell = ws.cell(row=r, column=3 + i, value=p["raw_accounts"][code]["monto"])

@@ -143,6 +143,46 @@ def test_to_excel_include_raw_creates_second_sheet(tmp_path):
     assert ws_raw.cell(row=1, column=1).value == "Código SMV"
 
 
+def test_to_excel_raw_sanea_strings_que_inyectarian_formula(tmp_path):
+    """Si SMV (o un MITM) devuelve una DescripcionCuenta que comienza con
+    `=`, `+`, `-`, `@`, abrir el archivo en Excel ejecutaría la fórmula.
+    El export debe prefijar con apóstrofe `'` para neutralizar el vector."""
+    # Inyectamos un período sintético con un raw_account malicioso.
+    fake_data = {
+        "periods": [{
+            "fiscal_year": 2024,
+            "quarter": None,
+            "schema": "2D",
+            "tipo": "consolidado",
+            "currency": "PEN",
+            "raw_accounts": {
+                "9X9999": {
+                    "nombre": "=HYPERLINK(\"https://evil.example.com\",\"click\")",
+                    "monto": 100,
+                },
+                "9X9998": {"nombre": "+SUM(A1:A10)", "monto": 200},
+                "9X9997": {"nombre": "-99", "monto": 300},
+                "9X9996": {"nombre": "@SUM(1)", "monto": 400},
+                "9X9995": {"nombre": "Texto normal", "monto": 500},
+            },
+        }],
+        "info": {"ticker": "ALICORC1", "currency": "PEN"},
+    }
+    path = to_excel(fake_data, tmp_path / "raw_inj.xlsx",
+                    ticker="ALICORC1", include_raw=True)
+    wb = load_workbook(path)
+    ws = wb["Cuentas adicionales (raw)"]
+
+    nombres = {ws.cell(row=r, column=2).value for r in range(2, ws.max_row + 1)}
+    # Strings peligrosos prefijados con '
+    assert "'=HYPERLINK(\"https://evil.example.com\",\"click\")" in nombres
+    assert "'+SUM(A1:A10)" in nombres
+    assert "'-99" in nombres
+    assert "'@SUM(1)" in nombres
+    # String normal sin tocar
+    assert "Texto normal" in nombres
+
+
 # ---------------------------------------------------------------------------
 # Trimestral
 # ---------------------------------------------------------------------------
