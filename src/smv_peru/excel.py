@@ -497,7 +497,9 @@ def to_excel(
         filepath: ruta del archivo Excel a generar (.xlsx).
         include_raw: si True, agrega hoja ``Cuentas adicionales`` con raw_accounts.
             Para multi-empresa, una hoja raw por ticker con sufijo ``_raw``.
-        ticker: ticker BVL (opcional, solo single-empresa). Enriquece header.
+        ticker: ticker BVL (opcional, solo single-empresa). Si se omite, se
+            auto-detecta desde ``result["info"]["ticker"]``. Enriquece header
+            con el nombre de la empresa.
 
     Returns:
         Path absoluto del archivo generado.
@@ -537,6 +539,8 @@ def to_excel(
         if not result.get("periods"):
             raise ValueError("'result' no contiene 'periods'")
         ws = wb.create_sheet("EEFF")
+        if ticker is None:
+            ticker = result.get("info", {}).get("ticker")
         _populate_eeff_sheet(ws, result["periods"], ticker)
         if include_raw:
             ws_raw = wb.create_sheet("Cuentas adicionales (raw)")
