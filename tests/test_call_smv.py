@@ -24,10 +24,10 @@ def test_reads_from_cache_when_available_trimestral():
 
 
 def test_does_not_hit_network_when_cached(monkeypatch):
-    """Cuando hay cache, urlopen NO debe ser invocado."""
+    """Cuando hay cache, el opener HTTP NO debe ser invocado."""
     def fail_if_called(*args, **kwargs):
-        raise AssertionError("urlopen no debería invocarse cuando hay cache")
-    monkeypatch.setattr("urllib.request.urlopen", fail_if_called)
+        raise AssertionError("opener.open no debería invocarse cuando hay cache")
+    monkeypatch.setattr("smv_peru.client._SMV_OPENER.open", fail_if_called)
     rows = _call_smv("obtener_GanciaPerdida", 2023, "A", "C", FIXTURES)
     assert rows is not None
 
@@ -35,33 +35,39 @@ def test_does_not_hit_network_when_cached(monkeypatch):
 def test_returns_none_when_cache_missing_and_network_fails(monkeypatch, tmp_path):
     """Si no hay cache y la red falla (incluyendo todos los reintentos),
     devuelve None (no crashea). Mockeamos time.sleep para no demorar el test."""
-    def fake_urlopen(*args, **kwargs):
+    def fake_open(*args, **kwargs):
         raise urllib.error.URLError("simulated network failure")
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("smv_peru.client._SMV_OPENER.open", fake_open)
     # Saltamos los sleeps del backoff para que el test sea rápido.
     monkeypatch.setattr("time.sleep", lambda *a, **kw: None)
     result = _call_smv("obtener_BalanceGeneral", 2099, "A", "C", tmp_path)
     assert result is None
 
 
+def _make_mock_response(body_bytes: bytes,
+                       url: str = "https://mvnet.smv.gob.pe/ws_od_eeff/WebServiceInfoFinanciera.asmx"):
+    """Construye una respuesta mock con .url configurado para pasar la
+    validación de host del cliente."""
+    from unittest.mock import MagicMock
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = body_bytes
+    mock_resp.url = url
+    mock_resp.__enter__ = lambda self: self
+    mock_resp.__exit__ = lambda self, *a: None
+    return mock_resp
+
+
 def test_writes_cache_as_gzip(monkeypatch, tmp_path):
     """Después de descargar exitosamente, el cache se escribe como .json.gz
     (no .json). Reduce ~96% el tamaño en disco."""
-    import urllib.request
-    from unittest.mock import MagicMock
-
-    def fake_urlopen(*args, **kwargs):
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = (
+    def fake_open(*args, **kwargs):
+        return _make_mock_response(
             b'<obtener_BalanceGeneralResult>'
             b'[{"RPJ":"X","Cuenta":"1D01ST","Monto1":100}]'
             b'</obtener_BalanceGeneralResult>'
         )
-        mock_resp.__enter__ = lambda self: self
-        mock_resp.__exit__ = lambda self, *a: None
-        return mock_resp
 
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("smv_peru.client._SMV_OPENER.open", fake_open)
     result = _call_smv("obtener_BalanceGeneral", 2024, "A", "C", tmp_path)
     assert result is not None
 
@@ -86,25 +92,38 @@ def test_reads_cache_legacy_json_format(tmp_path):
 
 def test_retries_on_transient_network_failure(monkeypatch, tmp_path):
     """Si la red falla 2 veces y luego responde, debería tener éxito al 3er intento."""
-    import urllib.request
-    from unittest.mock import MagicMock
-
     call_count = {"n": 0}
-    def flaky_urlopen(*args, **kwargs):
+    def flaky_open(*args, **kwargs):
         call_count["n"] += 1
         if call_count["n"] < 3:
             raise urllib.error.URLError("simulated transient failure")
-        # Tercera vez, responder con un Result válido (lista vacía OK)
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = (
+        return _make_mock_response(
             b'<obtener_BalanceGeneralResult>[]</obtener_BalanceGeneralResult>'
         )
-        mock_resp.__enter__ = lambda self: self
-        mock_resp.__exit__ = lambda self, *a: None
-        return mock_resp
 
-    monkeypatch.setattr("urllib.request.urlopen", flaky_urlopen)
+    monkeypatch.setattr("smv_peru.client._SMV_OPENER.open", flaky_open)
     monkeypatch.setattr("time.sleep", lambda *a, **kw: None)
     result = _call_smv("obtener_BalanceGeneral", 2099, "A", "C", tmp_path)
     assert call_count["n"] == 3
     assert result == []
+
+
+def test_rechaza_respuesta_de_host_distinto(monkeypatch, tmp_path):
+    """Si la URL final tras la respuesta no apunta a mvnet.smv.gob.pe,
+    descartar la respuesta y NO cachearla. Defensa contra cache poisoning
+    via redirect / MITM con CA comprometida.
+    """
+    def attacker_open(*args, **kwargs):
+        return _make_mock_response(
+            b'<obtener_BalanceGeneralResult>'
+            b'[{"RPJ":"FALSE","Cuenta":"1D01ST","Monto1":99999}]'
+            b'</obtener_BalanceGeneralResult>',
+            url="https://attacker.example.com/evil",
+        )
+
+    monkeypatch.setattr("smv_peru.client._SMV_OPENER.open", attacker_open)
+    monkeypatch.setattr("time.sleep", lambda *a, **kw: None)
+    result = _call_smv("obtener_BalanceGeneral", 2099, "A", "C", tmp_path)
+    assert result is None
+    # Verificar que NO se escribió cache envenenado
+    assert not (tmp_path / "obtener_BalanceGeneral_2099_C_A.json.gz").exists()

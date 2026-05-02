@@ -70,11 +70,40 @@ logger = logging.getLogger("smv_peru")
 SMV_ENDPOINT = "https://mvnet.smv.gob.pe/ws_od_eeff/WebServiceInfoFinanciera.asmx"
 SMV_NAMESPACE = "http://tempuri.org/"
 SMV_TIMEOUT_S = 120
+# Prefijo HTTPS confiable para validar la URL final tras la respuesta. Cualquier
+# redirect que mande a otro host (o a HTTP plano) debe rechazarse antes de
+# cachear la respuesta — un body manipulado puede envenenar el cache local.
+SMV_HOST_PREFIX = "https://mvnet.smv.gob.pe/"
 
 # Límite máximo de workers en paralelo: no saturar el web service de SMV.
 MAX_WORKERS_LIMIT = 10
 # Reintentos en errores de red transitorios (timeout, connection reset).
 SMV_MAX_RETRIES = 3
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Rechaza cualquier redirect (3xx) del web service de SMV.
+
+    Sin esto, ``urllib.request`` sigue redirects HTTP↔HTTPS de forma
+    transparente. Un atacante MITM podría responder con
+    ``Location: http://...`` para forzar el reenvío del body SOAP por HTTP
+    plano, capturar/manipular la respuesta, y la librería cachearía datos
+    falsificados. El endpoint de SMV es estático y no debería redirigir;
+    si un día lo hace, prefiero que el caller falle ruidosamente.
+    """
+
+    def http_error_301(self, req, fp, code, msg, headers):
+        raise urllib.error.HTTPError(req.full_url, code,
+                                     f"Redirect rechazado por seguridad: {msg}",
+                                     headers, fp)
+
+    http_error_302 = http_error_301
+    http_error_303 = http_error_301
+    http_error_307 = http_error_301
+    http_error_308 = http_error_301
+
+
+_SMV_OPENER = urllib.request.build_opener(_NoRedirectHandler())
 
 
 def _user_cache_dir(app_name: str) -> Path:
@@ -445,7 +474,19 @@ def _call_smv(operacion: str, ejercicio: int, periodo: str, tipo: str,
     raw = None
     for attempt in range(SMV_MAX_RETRIES + 1):
         try:
-            with urllib.request.urlopen(req, timeout=SMV_TIMEOUT_S) as resp:
+            with _SMV_OPENER.open(req, timeout=SMV_TIMEOUT_S) as resp:
+                # Defensa contra cache poisoning: si la URL final no apunta al
+                # host esperado (por un redirect que algún proxy/handler permita
+                # en una versión futura, o por un MITM con CA comprometida que
+                # responda con 200 desde otro host), rechazamos antes de leer.
+                final_url = getattr(resp, "url", None) or req.full_url
+                if not final_url.startswith(SMV_HOST_PREFIX):
+                    logger.warning(
+                        f"SMV {operacion} {ejercicio} {tipo} P={periodo}: "
+                        f"URL final inesperada {final_url!r}; descartando "
+                        f"respuesta (no se cachea)"
+                    )
+                    return None
                 raw = resp.read().decode('utf-8', errors='replace')
             break  # éxito
         except (urllib.error.URLError, TimeoutError, OSError) as e:
