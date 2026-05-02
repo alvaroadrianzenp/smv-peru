@@ -7,6 +7,10 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 
+# Build artifacts (PyPI sdist + wheel)
+dist/
+build/
+
 # Entornos virtuales
 .venv/
 venv/

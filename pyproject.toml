@@ -4,11 +4,44 @@ version = "0.1.0"
 description = "Cliente Python para los datos financieros públicos de la Superintendencia del Mercado de Valores del Perú (SMV)"
 readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.9"
+authors = [
+    { name = "Alvaro Adrianzén Puccio", email = "alvaroadrianzenp@gmail.com" },
+]
+keywords = [
+    "smv", "peru", "bvl", "estados-financieros", "financial-statements",
+    "ifrs", "niif", "soap", "scraper", "finanzas", "finance",
+    "bolsa", "lima", "south-america",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: Spanish",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
 dependencies = []
 
 [project.optional-dependencies]
-excel = ["openpyxl>=3.0"]
+excel = ["openpyxl>=3.1"]
+
+[project.urls]
+Homepage = "https://github.com/alvaroadrianzenp/smv-peru"
+Repository = "https://github.com/alvaroadrianzenp/smv-peru"
+Issues = "https://github.com/alvaroadrianzenp/smv-peru/issues"
+Changelog = "https://github.com/alvaroadrianzenp/smv-peru/blob/main/CHANGELOG.md"
 
 [build-system]
 requires = ["hatchling"]
@@ -16,6 +49,16 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/smv_peru"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/smv_peru",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "pyproject.toml",
+    "tests",
+]
 
 [dependency-groups]
 dev = [
