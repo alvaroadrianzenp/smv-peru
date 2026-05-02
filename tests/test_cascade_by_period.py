@@ -1,14 +1,20 @@
-"""Tests para la cascada de fallbacks por período.
+"""Tests para los fallbacks de homogeneidad de la serie.
 
-Orden de fallbacks cuando Consolidado anual está incompleto para un RPJ:
-  1) Si solo falta el Balance Consolidado y existe Balance Q4 Consolidado,
-     usa Q4 como sustituto (stock idéntico al cierre anual). Mantiene la
-     consistencia "Consolidado" del reporte. Caso real: BBVA 2022.
-  2) Si lo anterior no aplica o también falla, cascada a Individual completo
-     del mismo período. Caso real hipotético / casos edge.
+Política: la serie devuelta nunca mezcla Consolidado con Individual.
 
-Cada período expone `tipo` con su origen real ("consolidado" o "individual")
-y, opcionalmente, `balance_source="Q4_consolidado"` cuando hubo sustitución.
+Cuando se pide `tipo="consolidado"`:
+  1) Si solo falta el Balance Consolidado anual y existe Balance Q4
+     Consolidado, usa Q4 como sustituto (stock idéntico al cierre anual).
+     Mantiene la consistencia "Consolidado". Caso real: BBVA 2022. Cada
+     período sustituido expone `balance_source="Q4_consolidado"`.
+  2) Si ningún período del rango tiene Consolidado disponible para el RPJ,
+     la cascada full-series final cae a Individual completo (toda la serie
+     homogénea en I). Caso real: INTERBC1 (Interbank), CVERDEC1, etc.
+  3) Si algunos períodos tienen Consolidado y otros no, los que no lo tienen
+     se OMITEN (no se rellenan con Individual): mezclar tipos distorsiona la
+     lectura del reporte.
+
+Cada período expone `tipo` con su origen real ("consolidado" o "individual").
 """
 import json
 from pathlib import Path
@@ -88,9 +94,10 @@ def test_bbva_2022_balance_anual_ausente_usa_q4_consolidado(tmp_path):
     assert p["equity"] == 11_253_374
 
 
-def test_si_q4_tampoco_existe_cae_a_individual(tmp_path):
-    """Si Balance C anual y Balance C Q4 ambos están vacíos, se intenta
-    Individual completo (segundo fallback)."""
+def test_si_q4_tampoco_existe_y_es_unico_periodo_cae_full_series_a_individual(tmp_path):
+    """Si Balance C anual y Balance C Q4 están vacíos para el ÚNICO período
+    del rango, periods_data queda vacío y la cascada full-series final cae
+    a Individual (toda la serie en I, homogénea)."""
     rpj = "B80004"
 
     _write_cache(tmp_path, "GanciaPerdida", 2022, "C", "A", [
@@ -119,8 +126,57 @@ def test_si_q4_tampoco_existe_cae_a_individual(tmp_path):
     assert result is not None
     p = result["periods"][0]
     assert p["tipo"] == "individual"
-    assert "balance_source" not in p  # no aplica cuando es Individual
+    assert "balance_source" not in p
     assert p["equity"] == 5_300_000
+
+
+def test_periodo_sin_consolidado_se_omite_si_otros_periodos_si_lo_tienen(tmp_path):
+    """Política de homogeneidad: si en un rango pedido como Consolidado un
+    período NO tiene C disponible, ese período se OMITE — no se rellena con
+    Individual. Caso real: trimestre más reciente aún sin publicar en C
+    (UNACEM 2026Q1 al momento de pedir 2025Q1..2026Q1).
+    """
+    rpj = "B80004"
+
+    # 2021 y 2022 anual: Consolidado completo
+    for y in (2021, 2022):
+        _write_cache(tmp_path, "GanciaPerdida", y, "C", "A", [
+            _row(rpj, "2F0101", 1_100_000 + y),
+            _row(rpj, "2F2301", 550_000),
+        ])
+        _write_cache(tmp_path, "BalanceGeneral", y, "C", "A", [
+            _row(rpj, "1F3306", 11_000_000 + y),
+        ])
+        _write_cache(tmp_path, "FlujoEfectivo", y, "C", "A", [
+            _row(rpj, "3F0501", 220_000),
+        ])
+
+    # 2023 anual: Consolidado vacío (período sin reportar aún en C)
+    _write_cache(tmp_path, "GanciaPerdida", 2023, "C", "A", [])
+    _write_cache(tmp_path, "BalanceGeneral", 2023, "C", "A", [])
+    _write_cache(tmp_path, "FlujoEfectivo", 2023, "C", "A", [])
+    _write_cache(tmp_path, "BalanceGeneral", 2023, "C", "4", [])  # Q4 también vacío
+
+    # Individual sí existe para 2023 — la librería lo IGNORA porque hay
+    # otros períodos con Consolidado (no se mezcla).
+    _write_cache(tmp_path, "GanciaPerdida", 2023, "I", "A", [
+        _row(rpj, "2F0101", 200_000),  # holding sola: ~10x menor
+    ])
+    _write_cache(tmp_path, "BalanceGeneral", 2023, "I", "A", [
+        _row(rpj, "1F3306", 1_500_000),
+    ])
+    _write_cache(tmp_path, "FlujoEfectivo", 2023, "I", "A", [
+        _row(rpj, "3F0501", 30_000),
+    ])
+
+    result = fetch_eeff("BBVAC1", desde=2021, hasta=2023, periodicidad="anual",
+                       cache_dir=tmp_path)
+    assert result is not None
+    years = [p["fiscal_year"] for p in result["periods"]]
+    assert years == [2021, 2022]  # 2023 omitido
+    for p in result["periods"]:
+        assert p["tipo"] == "consolidado"
+    assert (2023, None) in result["info"]["periods_missing"]
 
 
 def test_early_exit_a_individual_si_rpj_nunca_aparece_en_consolidado(tmp_path):
@@ -157,50 +213,6 @@ def test_early_exit_a_individual_si_rpj_nunca_aparece_en_consolidado(tmp_path):
         assert p["tipo"] == "individual"
         assert "balance_source" not in p
     assert result["info"]["tipo"] == "individual"
-
-
-def test_cascada_individual_en_trimestral_no_rompe_ytd(tmp_path):
-    """Regresión: cuando un período trimestral cae a Individual via cascada
-    por-período, la detección YTD sobre Individual no debe lanzar excepción.
-    Antes había un bug donde `_is_ytd` se llamaba con argumentos incorrectos
-    en este path (faltaba el `codigo_referencia`)."""
-    rpj = "B80004"
-    # Q3 2023: C tiene PNL+Flow OK pero Bal vacío (escenario que activa cascada)
-    _write_cache(tmp_path, "GanciaPerdida", 2023, "C", "3", [
-        _row(rpj, "2F0101", 800_000), _row(rpj, "2F2301", 400_000),
-    ])
-    _write_cache(tmp_path, "BalanceGeneral", 2023, "C", "3", [])  # gap C
-    _write_cache(tmp_path, "FlujoEfectivo", 2023, "C", "3", [
-        _row(rpj, "3F0501", 150_000),
-    ])
-    # Q4 C tampoco tiene Balance — fallback Q4 falla, cae a Individual
-    _write_cache(tmp_path, "BalanceGeneral", 2023, "C", "4", [])
-
-    # Otros buckets C necesarios para que la fase 1-2 no falle (vacíos OK)
-    for q in ("1", "2", "4", "A"):
-        for op in ("GanciaPerdida", "BalanceGeneral", "FlujoEfectivo"):
-            if not (tmp_path / f"obtener_{op}_2023_C_{q}.json").exists():
-                _write_cache(tmp_path, op, 2023, "C", q, [
-                    _row(rpj, "2F0101", 0)  # algo con el RPJ para que C no caiga al early-exit
-                ])
-
-    # Individual completo para Q3 2023 + Q4 + Anual (necesarios para detección YTD)
-    for q in ("1", "2", "3", "4", "A"):
-        _write_cache(tmp_path, "GanciaPerdida", 2023, "I", q, [
-            _row(rpj, "2F0101", 800_000), _row(rpj, "2F2301", 400_000),
-        ])
-        _write_cache(tmp_path, "BalanceGeneral", 2023, "I", q, [
-            _row(rpj, "1F3306", 5_300_000),
-        ])
-        _write_cache(tmp_path, "FlujoEfectivo", 2023, "I", q, [
-            _row(rpj, "3F0501", 150_000), _row(rpj, "3D01ST", 150_000),
-        ])
-
-    # No debe lanzar TypeError en _is_ytd
-    result = fetch_eeff("BBVAC1", desde=2023, hasta=2023, periodicidad="trimestral",
-                       cache_dir=tmp_path)
-    # Lo importante: no crash. Que devuelva períodos o no es secundario aquí.
-    assert result is not None or result is None  # solo verificar que no rompe
 
 
 def test_consolidado_completo_marca_tipo_consolidado(tmp_path):

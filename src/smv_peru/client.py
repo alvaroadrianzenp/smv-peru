@@ -1559,12 +1559,10 @@ def fetch_eeff(
                 cache_dir=cache_dir, max_workers=max_workers,
             )
 
-    # ---- Fase 2.5: pre-detectar calls de fallback Individual y bajarlas en
-    # paralelo. Si dejáramos que la cascada por-período las haga ad-hoc en
-    # fase 3, terminaríamos con N calls SOAP sincrónicas (caso conocido:
-    # ENGEPEC1 trimestral tiene 2024 C completo pero 2020-2023 vacío en C
-    # → 16 quarters × 3 calls = 48 calls serial = ~7 min). Aquí las
-    # acumulamos y las bajamos con el mismo executor paralelizado.
+    # ---- Fase 2.5: pre-detectar calls de fallback Q4 Consolidado y bajarlas
+    # en paralelo. Cuando un año anual tiene PNL+Flow C pero no Balance C, el
+    # Balance Q4 C es estructuralmente idéntico al cierre anual (stock) y
+    # mantiene la consistencia "Consolidado". Caso real: BBVA 2022.
     if tipo_code == "C":
         fallback_calls: set[tuple[str, int, str, str]] = set()
         for y_ in range(desde, hasta + 1):
@@ -1577,22 +1575,13 @@ def fetch_eeff(
                 if (p_ == "A" and _has_rpj_data(pnl_c, rpj)
                         and not _has_rpj_data(bal_c, rpj)):
                     fallback_calls.add((OP_BAL, y_, "4", "C"))
-                # Cascada Individual completa
-                fallback_calls.add((OP_PNL, y_, p_, "I"))
-                fallback_calls.add((OP_BAL, y_, p_, "I"))
-                fallback_calls.add((OP_FLOW, y_, p_, "I"))
-                if periodicidad == "trimestral":
-                    if p_ in ("2", "3", "4"):
-                        fallback_calls.add((OP_FLOW, y_, str(int(p_) - 1), "I"))
-                    fallback_calls.add((OP_FLOW, y_, "4", "I"))
-                    fallback_calls.add((OP_FLOW, y_, "A", "I"))
         # Quitar las que ya tenemos en results
         fallback_calls -= set(results.keys())
 
         if fallback_calls:
             logger.info(
                 f"smv-peru: {ticker} requiere {len(fallback_calls)} llamadas SOAP "
-                f"adicionales para cubrir fallbacks (Q4 / Individual)"
+                f"adicionales para cubrir fallbacks (Q4 Consolidado)"
             )
             tick2 = _make_progress_writer(
                 len(fallback_calls), f"  {ticker} fallback"
@@ -1624,16 +1613,18 @@ def fetch_eeff(
                     tick2()
 
     # ---- Fase 3: procesar usando resultados ya descargados ----------------
-    # Cascada por período (no por ticker entero): si Consolidado tiene PNL/Bal
-    # incompletos para este RPJ en un año específico, intentamos Individual
-    # solo para ese período. Esto resuelve casos como BBVA 2022, donde SMV
-    # publicó PNL+Flow Consolidado pero NO Balance Consolidado, mientras que
-    # Individual está completo (gap conocido del cargador SMV — el documento
-    # consolidado oficial sí existe).
+    # Política de homogeneidad: la serie devuelta nunca mezcla Consolidado con
+    # Individual. Si pidieron `tipo="consolidado"` y un período no tiene
+    # Consolidado disponible (incluso tras intentar el sustituto Balance Q4),
+    # ese período se OMITE — no se rellena con Individual. Mezclar tipos
+    # distorsiona la lectura del reporte (ej. matriz consolidante vs holding
+    # sola). Si ningún período del rango tiene Consolidado, la cascada
+    # full-series al final cae a Individual completo (toda la serie homogénea
+    # en I). Caso BBVA 2022 (PNL+Flow C anual OK, Balance C anual ausente)
+    # sigue cubierto por la cascada Q4 abajo, que mantiene "Consolidado".
     periods_data = []
     for y in range(desde, hasta + 1):
         cf_is_ytd_c = False
-        cf_is_ytd_i: bool | None = None  # lazy: solo se calcula si hay fallback
         if periodicidad == "trimestral":
             cf_is_ytd_c = _check_cf_ytd_from_results(results, rpj, y, tipo_code)
 
@@ -1641,19 +1632,14 @@ def fetch_eeff(
             pnl = results.get((OP_PNL, y, p, tipo_code))
             bal = results.get((OP_BAL, y, p, tipo_code))
             flow = results.get((OP_FLOW, y, p, tipo_code))
-            used_tipo = tipo  # "consolidado" o "individual" según el arg
 
-            # Detectar incompletitud por RPJ y aplicar cascada en orden:
-            #   1) Si solo falta Balance C anual y existe Balance Q4 C, usar
-            #      Q4 como sustituto. El balance es stock: el cierre del Q4
-            #      equivale matemáticamente al cierre anual (validado contra
-            #      múltiples empresas: coincide al peso). Mantiene la
-            #      consistencia "Consolidado" del reporte.
-            #   2) Si lo anterior no aplica o falla, caer back a Individual
-            #      completo del mismo período.
             consolidated_ok = _has_rpj_data(pnl, rpj) and _has_rpj_data(bal, rpj)
             balance_substituted_from_q4 = False
 
+            # Cascada Q4 → Anual (solo Consolidado): si solo falta Balance C
+            # anual y Balance Q4 C existe, usar Q4 como sustituto. El balance
+            # es stock: el cierre del Q4 equivale al cierre anual (validado
+            # contra múltiples empresas). Mantiene "Consolidado".
             if (tipo_code == "C" and not consolidated_ok and p == "A"
                     and _has_rpj_data(pnl, rpj) and not _has_rpj_data(bal, rpj)):
                 bal_q4 = _call_smv(OP_BAL, y, "4", "C", cache_dir)
@@ -1667,51 +1653,28 @@ def fetch_eeff(
                         f"idéntico al cierre anual)"
                     )
 
+            # Si pidieron Consolidado y no llegamos a tener serie completa
+            # para este período, omitirlo (no mezclar con Individual).
             if tipo_code == "C" and not consolidated_ok:
-                ind_pnl = _call_smv(OP_PNL, y, p, "I", cache_dir)
-                ind_bal = _call_smv(OP_BAL, y, p, "I", cache_dir)
-                ind_flow = _call_smv(OP_FLOW, y, p, "I", cache_dir)
-                if _has_rpj_data(ind_pnl, rpj) and _has_rpj_data(ind_bal, rpj):
-                    pnl, bal, flow = ind_pnl, ind_bal, ind_flow
-                    used_tipo = "individual"
-                    label_q = f"Q{p}" if p != "A" else ""
-                    logger.info(
-                        f"smv-peru: {ticker} {y}{label_q} incompleto en "
-                        f"Consolidado; usando Individual como fallback"
-                    )
-                    # Cuando el origen es Individual, recalcular YTD sobre
-                    # datos Individuales del mismo año. Cargamos Q4 y Anual
-                    # Individual al diccionario de resultados para reutilizar
-                    # la lógica canónica de detección.
-                    if periodicidad == "trimestral" and p in ("2", "3", "4"):
-                        if cf_is_ytd_i is None:
-                            results.setdefault(
-                                (OP_FLOW, y, "4", "I"),
-                                _call_smv(OP_FLOW, y, "4", "I", cache_dir),
-                            )
-                            results.setdefault(
-                                (OP_FLOW, y, "A", "I"),
-                                _call_smv(OP_FLOW, y, "A", "I", cache_dir),
-                            )
-                            cf_is_ytd_i = _check_cf_ytd_from_results(
-                                results, rpj, y, "I"
-                            )
-                        if cf_is_ytd_i and flow is not None:
-                            flow_prev = _call_smv(OP_FLOW, y, str(int(p) - 1), "I", cache_dir)
-                            if flow_prev is not None:
-                                flow = _subtract_rows(flow, flow_prev)
-            else:
-                # Camino normal: YTD detection sobre Consolidado
-                if periodicidad == "trimestral" and p in ("2", "3", "4") and cf_is_ytd_c and flow is not None:
-                    prev_p = str(int(p) - 1)
-                    flow_prev = results.get((OP_FLOW, y, prev_p, tipo_code))
-                    if flow_prev is not None:
-                        flow = _subtract_rows(flow, flow_prev)
+                label_q = f"Q{p}" if p != "A" else ""
+                logger.info(
+                    f"smv-peru: {ticker} {y}{label_q} incompleto en "
+                    f"Consolidado; período omitido (no se mezcla con "
+                    f"Individual)"
+                )
+                continue
+
+            # YTD detection sobre el tipo solicitado
+            if periodicidad == "trimestral" and p in ("2", "3", "4") and cf_is_ytd_c and flow is not None:
+                prev_p = str(int(p) - 1)
+                flow_prev = results.get((OP_FLOW, y, prev_p, tipo_code))
+                if flow_prev is not None:
+                    flow = _subtract_rows(flow, flow_prev)
 
             quarter = None if p == "A" else int(p)
             yd = mapper(rpj, pnl, bal, flow, y, quarter)
             if yd is not None:
-                yd["tipo"] = used_tipo
+                yd["tipo"] = tipo
                 if balance_substituted_from_q4:
                     yd["balance_source"] = "Q4_consolidado"
                 periods_data.append(yd)
