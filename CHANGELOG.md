@@ -7,7 +7,7 @@ el proyecto sigue [Versionado Semántico](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-05-01
+## [0.1.0] - 2026-05-03
 
 Primera versión pública. Cliente Python para el web service SOAP de la
 Superintendencia del Mercado de Valores del Perú (SMV) que descarga estados
