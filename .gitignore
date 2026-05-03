@@ -32,3 +32,6 @@ Thumbs.db
 data/
 *.db
 *.sqlite
+
+# Outputs de prueba en root (ej. interbank.xlsx, scotiabank.xlsx)
+/*.xlsx
