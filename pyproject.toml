@@ -59,6 +59,7 @@ include = [
     "LICENSE",
     "pyproject.toml",
     "tests",
+    "docs",
 ]
 
 [dependency-groups]
