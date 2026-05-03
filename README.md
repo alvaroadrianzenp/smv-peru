@@ -128,6 +128,8 @@ Esta librería **no es oficial**. No tiene afiliación, endorsement ni relación
 
 Los datos provienen del portal público de SMV; **no se garantiza la exactitud, completitud ni puntualidad**. Provista con fines informativos y educativos — **no constituye recomendación de inversión, asesoría financiera ni opinión profesional sobre instrumentos financieros**. Cualquier decisión de inversión basada en estos datos es responsabilidad exclusiva del usuario.
 
+Esta librería consume el web service SOAP oficial que SMV expone públicamente en `mvnet.smv.gob.pe`. La distribución del paquete se ajusta al espíritu de la Ley 27806 de Transparencia y Acceso a la Información Pública del Perú: los datos financieros de empresas listadas en BVL son información de carácter público.
+
 ## Licencia
 
 Distribuido bajo la licencia MIT. Ver [LICENSE](LICENSE) para más detalles. Los datos provienen de la SMV Perú; la atribución a la fuente es obligatoria al redistribuirlos.
