@@ -111,17 +111,6 @@ uv run python scripts/smoke_test.py  # smoke test contra SMV real (27 tickers)
 
 El [demo](examples/demo.py) muestra los principales casos de uso. El smoke test ejercita los 27 tickers contra el web service real para detectar regresiones que los unitarios con fixtures no cubren (cold cache ~5 min, warm <30 s).
 
-## Roadmap
-
-- [x] Soporte de esquema 2D (industriales) y 2F (bancos)
-- [x] LTM trimestral, `payout_ratio` con lag T-1, EBITDA con `set_dna`
-- [x] Cache gzip compartido, descargas paralelas, reintentos
-- [x] Hardening de seguridad (TLS, formula injection, validación de inputs)
-- [ ] Repo público en GitHub
-- [ ] CI con GitHub Actions
-- [ ] Publicación en PyPI
-- [ ] Soporte de esquema 2E (aseguradoras: Pacífico, Rímac) — 0.2+
-
 ## Disclaimer
 
 Esta librería **no es oficial**. No tiene afiliación, endorsement ni relación con la Superintendencia del Mercado de Valores del Perú (SMV) ni con la Bolsa de Valores de Lima (BVL).
