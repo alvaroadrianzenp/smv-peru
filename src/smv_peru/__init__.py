@@ -2,6 +2,13 @@
 Superintendencia del Mercado de Valores del Perú (SMV).
 """
 
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("smv-peru")
+except PackageNotFoundError:
+    __version__ = "0.0.0+unknown"
+
 from .client import (
     FIELDS_TO_CODES,
     FIELDS_TO_CODES_2D,
@@ -16,6 +23,7 @@ from .excel import to_excel
 from .csv_export import to_csv
 
 __all__ = [
+    "__version__",
     "fetch_eeff",
     "fetch_estados_financieros",
     "fetch_multi",
