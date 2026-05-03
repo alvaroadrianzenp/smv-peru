@@ -7,7 +7,7 @@ license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.9"
 authors = [
-    { name = "Alvaro Adrianzén Puccio", email = "alvaroadrianzenp@gmail.com" },
+    { name = "Alvaro Adrianzén Puccio", email = "alvaroadrianzenp@users.noreply.github.com" },
 ]
 keywords = [
     "smv", "peru", "bvl", "estados-financieros", "financial-statements",
@@ -40,6 +40,7 @@ excel = ["openpyxl>=3.1"]
 [project.urls]
 Homepage = "https://github.com/alvaroadrianzenp/smv-peru"
 Repository = "https://github.com/alvaroadrianzenp/smv-peru"
+Documentation = "https://github.com/alvaroadrianzenp/smv-peru/tree/main/docs"
 Issues = "https://github.com/alvaroadrianzenp/smv-peru/issues"
 Changelog = "https://github.com/alvaroadrianzenp/smv-peru/blob/main/CHANGELOG.md"
 
